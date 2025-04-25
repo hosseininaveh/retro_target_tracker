@@ -12,8 +12,9 @@ class HeatmapTracker(nn.Module):
         self.head = nn.Sequential(
             nn.Conv2d(1280, 256, 1),
             nn.ReLU(),
-            nn.Conv2d(256, 1, 1)  # Added missing parenthesis
-        )  # This closing parenthesis was missing
+            nn.Conv2d(256, 1, 1),
+            nn.Upsample(size=256, mode='bilinear', align_corners=False)  # Add upsampling
+        )
         self.subpixel = SubpixelDecoder()
         
     def forward(self, x):

@@ -30,6 +30,9 @@ def load_config(config_path):
 
 def heatmap_loss(pred, target):
     """Weighted MSE loss focusing on target center"""
+    # Add channel dimension to target if needed
+    if len(target.shape) == 2:
+        target = target.unsqueeze(1)
     weights = 1 + 9 * target  # Emphasize peak accuracy
     return (weights * (pred - target)**2).mean()
 
@@ -82,7 +85,7 @@ def train():
     val_dataset = TargetDataset(config['data']['val_path'])
     
     # Use dynamic worker count based on batch size
-    num_workers = min(4, config['data']['batch_size'] * 2)
+    num_workers = min(2, config['data']['batch_size'] * 2)
     
     train_loader = DataLoader(
         train_dataset,

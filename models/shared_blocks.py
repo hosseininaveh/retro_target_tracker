@@ -7,15 +7,15 @@ class SubpixelDecoder(nn.Module):
     def forward(self, heatmap):
         # Get dimensions safely
         batch_size, channels, height, width = heatmap.size()
-        
+    
         # Validate dimensions
         if height <= 2 or width <= 2:
             raise ValueError(f"Heatmap size {height}x{width} is too small for coordinate calculation")
-        
+    
         # Calculate coordinates
         y_coords = torch.arange(height, device=heatmap.device)
         x_coords = torch.arange(width, device=heatmap.device)
-        
+    
         return y_coords, x_coords
 
 class AttentionRefinement(nn.Module):
