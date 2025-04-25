@@ -3,12 +3,38 @@ import cv2
 import torch
 import numpy as np
 import pandas as pd
+import random
 from torch.utils.data import Dataset
+
+class Augmentation:
+    """Data augmentation pipeline"""
+    def __call__(self, image, heatmap):
+        # Random horizontal flip
+        if random.random() > 0.5:
+            image = cv2.flip(image, 1)
+            heatmap = cv2.flip(heatmap, 1)
+            # Adjust x-coordinate if flipped
+            heatmap = np.fliplr(heatmap)
+        
+        # Random rotation (-15 to 15 degrees)
+        angle = random.uniform(-15, 15)
+        h, w = image.shape[:2]
+        center = (w // 2, h // 2)
+        M = cv2.getRotationMatrix2D(center, angle, 1.0)
+        image = cv2.warpAffine(image, M, (w, h))
+        heatmap = cv2.warpAffine(heatmap, M, (w, h))
+        
+        # Random brightness/contrast
+        alpha = random.uniform(0.8, 1.2)  # Contrast control
+        beta = random.uniform(-0.1, 0.1)  # Brightness control
+        image = cv2.convertScaleAbs(image, alpha=alpha, beta=beta)
+        
+        return image, heatmap
 
 class TargetDataset(Dataset):
     def __init__(self, image_dir, transform=None):
         self.image_dir = image_dir
-        self.transform = transform
+        self.transform = transform if transform else Augmentation()  # Default augmentation
         self.annotations = self._load_annotations()
         
         if self.annotations is None:
@@ -18,6 +44,7 @@ class TargetDataset(Dataset):
                 f"2. CSV has columns: 'image_path', 'x', 'y'\n"
                 f"3. First image path exists at: {os.path.join(image_dir, 'images', self._get_sample_image_path())}"
             )
+
 
     def __len__(self):
         return len(self.annotations)
