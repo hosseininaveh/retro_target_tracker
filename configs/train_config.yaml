@@ -1,0 +1,20 @@
+data:
+  train_path: "data/train"
+  val_path: "data/val"
+  batch_size: 16
+  input_size: [256, 256]
+
+model:
+  backbone: "mobilenet_v2"
+  learning_rate: 0.001
+  heatmap_sigma: 3.0  # Controls target spread in heatmap
+
+training:
+  epochs: 100
+  early_stop_patience: 10
+  checkpoint_dir: "checkpoints/"
+
+augmentation:
+  use_flip: true
+  use_noise: true
+  max_rotation: 15.0  # degrees
