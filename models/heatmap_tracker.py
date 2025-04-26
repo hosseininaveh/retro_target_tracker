@@ -1,3 +1,7 @@
+import torch
+import torch.nn as nn
+from torchvision.models import mobilenet_v2, MobileNet_V2_Weights
+
 class HeatmapTracker(nn.Module):
     def __init__(self):
         super().__init__()

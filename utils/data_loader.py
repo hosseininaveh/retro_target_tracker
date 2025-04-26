@@ -8,42 +8,32 @@ from torch.utils.data import Dataset
 
 class Augmentation:
     def __call__(self, image, heatmap):
-        # Random affine transform
+        # Random affine transforms
         if random.random() > 0.5:
-            h, w = image.shape[:2]
-            center = (w//2, h//2)
-            
-            # Combined affine transform
             angle = random.uniform(-15, 15)
             scale = random.uniform(0.9, 1.1)
-            tx = random.uniform(-0.1, 0.1) * w
-            ty = random.uniform(-0.1, 0.1) * h
+            tx = random.uniform(-0.1, 0.1) * image.shape[1]
+            ty = random.uniform(-0.1, 0.1) * image.shape[0]
             
-            M = cv2.getRotationMatrix2D(center, angle, scale)
+            M = cv2.getRotationMatrix2D((image.shape[1]/2, image.shape[0]/2), angle, scale)
             M[:,2] += [tx, ty]
             
-            image = cv2.warpAffine(image, M, (w, h), flags=cv2.INTER_LINEAR)
-            heatmap = cv2.warpAffine(heatmap, M, (w, h), flags=cv2.INTER_LINEAR)
-
-        # Color jitter
-        if random.random() > 0.5:
-            alpha = random.uniform(0.8, 1.2)  # Contrast
-            beta = random.uniform(-0.1, 0.1)  # Brightness
-            image = cv2.convertScaleAbs(image, alpha=alpha, beta=beta)
-
-        # Add noise
+            image = cv2.warpAffine(image, M, (image.shape[1], image.shape[0]))
+            heatmap = cv2.warpAffine(heatmap, M, (heatmap.shape[1], heatmap.shape[0]))
+        
+        # Add Gaussian noise
         if random.random() > 0.5:
             noise = np.random.normal(0, 0.03, image.shape).astype(np.float32)
             image = np.clip(image + noise, 0, 1)
-
+            
         # Motion blur
-        if random.random() > 0.3:
+        if random.random() > 0.7:
             size = random.randint(3, 7)
             kernel = np.zeros((size, size))
             kernel[int((size-1)/2), :] = np.ones(size)
             kernel = kernel / size
             image = cv2.filter2D(image, -1, kernel)
-
+            
         return image, heatmap
 
 class TargetDataset(Dataset):
@@ -84,19 +74,19 @@ class TargetDataset(Dataset):
         image = np.moveaxis(image, -1, 0)
         return torch.from_numpy(image).float(), torch.from_numpy(heatmap).float()
 
-def _create_heatmap(self, img_shape, center, sigma=3):
-    h, w = img_shape
-    y, x = np.indices((h, w))
-    
-    # Create 2D Gaussian
-    heatmap = np.exp(-((x - center[0])**2 + (y - center[1])**2) / (2 * sigma**2))
-    
-    # Normalize to [0,1] with peak=1 at center
-    heatmap = heatmap / heatmap.max()
-    
-    # Add minimal noise if needed (0.5% of max value)
-    heatmap += np.random.normal(0, 0.005, (h, w))
-    return np.clip(heatmap, 0, 1)
+    def _create_heatmap(self, img_shape, center, sigma=3):
+        h, w = img_shape
+        y, x = np.indices((h, w))
+        
+        # Create 2D Gaussian
+        heatmap = np.exp(-((x - center[0])**2 + (y - center[1])**2) / (2 * sigma**2))
+        
+        # Normalize to [0, 1] with peak at center
+        heatmap = heatmap / heatmap.max()
+        
+        # Add slight noise to prevent overconfidence
+        heatmap += np.random.normal(0, 0.01, (h, w))
+        return np.clip(heatmap, 0, 1)
 
     def _load_annotations(self):
         try:

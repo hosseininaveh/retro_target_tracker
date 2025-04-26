@@ -32,19 +32,20 @@ def load_config(config_path):
     return config
 
 def heatmap_loss(pred, target):
-    # Ensure shapes (B,1,H,W) or (B,H,W)
-    pred = pred.squeeze(1) if len(pred.shape) == 4 else pred
-    target = target.unsqueeze(1) if len(target.shape) == 3 else target
+    # Handle size mismatches
+    if target.dim() == 3:
+        target = target.unsqueeze(1)
+    if pred.size()[-2:] != target.size()[-2:]:
+        target = F.interpolate(target.float(), size=pred.size()[-2:], mode='bilinear')
     
-    # Stabilize log calculations
-    pred = torch.clamp(pred, min=1e-6, max=1-1e-6)
+    # Focal loss
+    alpha = 2.0
+    beta = 4.0
+    pos_mask = (target > 0.5).float()
+    neg_mask = (target <= 0.5).float()
     
-    # Balanced focal loss
-    pos_mask = (target > 0.1).float()
-    neg_mask = (target <= 0.1).float()
-    
-    pos_loss = -pos_mask * (1-pred)**2 * torch.log(pred)
-    neg_loss = -neg_mask * (pred)**2 * torch.log(1-pred)
+    pos_loss = -pos_mask * (1 - pred)**alpha * torch.log(pred + 1e-12)
+    neg_loss = -neg_mask * (1 - target)**beta * (pred)**alpha * torch.log(1 - pred + 1e-12)
     
     return (pos_loss + neg_loss).mean()
 
