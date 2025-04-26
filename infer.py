@@ -46,15 +46,26 @@ class TargetTracker:
         coords = coords[0].cpu().numpy()
         
         # Post-process coordinates
-        return self.postprocess(coords, (256, 256), original_shape)
+        return self.postprocess(coords, (256, 256), original_shape), 1.0  # Return coords and confidence
 
     def track_video(self, video_path, output_path=None):
         """Process video file or camera stream"""
+        # Create output directory if needed
+        if output_path:
+            import os
+            os.makedirs(os.path.dirname(output_path), exist_ok=True)
+        
         cap = cv2.VideoCapture(video_path if video_path else 0)
+        if not cap.isOpened():
+            print(f"Error: Could not open video {video_path}")
+            return
+            
         if output_path:
             fourcc = cv2.VideoWriter_fourcc(*'XVID')
-            out = cv2.VideoWriter(output_path, fourcc, 30.0, 
-                                (int(cap.get(3)), int(cap.get(4))))
+            fps = cap.get(cv2.CAP_PROP_FPS)
+            width = int(cap.get(cv2.CAP_PROP_FRAME_WIDTH))
+            height = int(cap.get(cv2.CAP_PROP_FRAME_HEIGHT))
+            out = cv2.VideoWriter(output_path, fourcc, fps, (width, height))
         
         while cap.isOpened():
             ret, frame = cap.read()
@@ -62,7 +73,8 @@ class TargetTracker:
                 break
             
             # Track and visualize
-            (x, y), _ = self.track(frame)
+            coords, confidence = self.track(frame)
+            x, y = coords[0], coords[1]
             vis_frame = draw_tracking_result(frame, (x, y))
             
             cv2.imshow('Tracking', vis_frame)
