@@ -84,19 +84,19 @@ class TargetDataset(Dataset):
         image = np.moveaxis(image, -1, 0)
         return torch.from_numpy(image).float(), torch.from_numpy(heatmap).float()
 
-    def _create_heatmap(self, img_shape, center, sigma=3):
-        h, w = img_shape
-        y, x = np.indices((h, w))
-        
-        # Create 2D Gaussian
-        heatmap = np.exp(-((x - center[0])**2 + (y - center[1])**2) / (2 * sigma**2))
-        
-        # Normalize to [0, 1] with peak at center
-        heatmap = heatmap / heatmap.max()
-        
-        # Add slight noise to prevent overconfidence
-        heatmap += np.random.normal(0, 0.01, (h, w))
-        return np.clip(heatmap, 0, 1)
+def _create_heatmap(self, img_shape, center, sigma=3):
+    h, w = img_shape
+    y, x = np.indices((h, w))
+    
+    # Create 2D Gaussian
+    heatmap = np.exp(-((x - center[0])**2 + (y - center[1])**2) / (2 * sigma**2))
+    
+    # Normalize to [0,1] with peak=1 at center
+    heatmap = heatmap / heatmap.max()
+    
+    # Add minimal noise if needed (0.5% of max value)
+    heatmap += np.random.normal(0, 0.005, (h, w))
+    return np.clip(heatmap, 0, 1)
 
     def _load_annotations(self):
         try:

@@ -32,22 +32,19 @@ def load_config(config_path):
     return config
 
 def heatmap_loss(pred, target):
-    """Improved focal loss for heatmap prediction"""
-    # Shape handling
-    if len(pred.shape) == 4:
-        pred = pred.squeeze(1)
-    if len(target.shape) == 3:
-        target = target.unsqueeze(1)
+    # Ensure shapes (B,1,H,W) or (B,H,W)
+    pred = pred.squeeze(1) if len(pred.shape) == 4 else pred
+    target = target.unsqueeze(1) if len(target.shape) == 3 else target
     
-    # Focal loss parameters
-    alpha = 2.0
-    beta = 4.0
+    # Stabilize log calculations
+    pred = torch.clamp(pred, min=1e-6, max=1-1e-6)
+    
+    # Balanced focal loss
     pos_mask = (target > 0.1).float()
     neg_mask = (target <= 0.1).float()
     
-    # Focal loss calculation
-    pos_loss = -pos_mask * (1 - pred)**alpha * torch.log(pred + 1e-12)
-    neg_loss = -neg_mask * (1 - target)**beta * (pred)**alpha * torch.log(1 - pred + 1e-12)
+    pos_loss = -pos_mask * (1-pred)**2 * torch.log(pred)
+    neg_loss = -neg_mask * (pred)**2 * torch.log(1-pred)
     
     return (pos_loss + neg_loss).mean()
 
@@ -170,6 +167,17 @@ def train():
         num_workers=num_workers,
         pin_memory=True
     )
+    sample = next(iter(train_loader))
+    img, heatmap = sample
+    print("\nData Verification:")
+    print(f"Heatmap max: {heatmap.max().item():.3f}, min: {heatmap.min().item():.3f}")
+    print(f"Target center: {np.unravel_index(heatmap[0].argmax(), heatmap.shape[-2:])}")
+ 
+    # Visual inspection
+    import matplotlib.pyplot as plt
+    plt.imshow(heatmap[0].numpy(), cmap='hot')
+    plt.title("Sample Heatmap")
+    plt.show()
     
     # Training loop
     best_loss = float('inf')
