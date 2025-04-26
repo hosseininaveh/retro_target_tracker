@@ -7,28 +7,43 @@ import random
 from torch.utils.data import Dataset
 
 class Augmentation:
-    """Data augmentation pipeline"""
     def __call__(self, image, heatmap):
-        # Random horizontal flip
+        # Random affine transform
         if random.random() > 0.5:
-            image = cv2.flip(image, 1)
-            heatmap = cv2.flip(heatmap, 1)
-            # Adjust x-coordinate if flipped
-            heatmap = np.fliplr(heatmap)
-        
-        # Random rotation (-15 to 15 degrees)
-        angle = random.uniform(-15, 15)
-        h, w = image.shape[:2]
-        center = (w // 2, h // 2)
-        M = cv2.getRotationMatrix2D(center, angle, 1.0)
-        image = cv2.warpAffine(image, M, (w, h))
-        heatmap = cv2.warpAffine(heatmap, M, (w, h))
-        
-        # Random brightness/contrast
-        alpha = random.uniform(0.8, 1.2)  # Contrast control
-        beta = random.uniform(-0.1, 0.1)  # Brightness control
-        image = cv2.convertScaleAbs(image, alpha=alpha, beta=beta)
-        
+            h, w = image.shape[:2]
+            center = (w//2, h//2)
+            
+            # Combined affine transform
+            angle = random.uniform(-15, 15)
+            scale = random.uniform(0.9, 1.1)
+            tx = random.uniform(-0.1, 0.1) * w
+            ty = random.uniform(-0.1, 0.1) * h
+            
+            M = cv2.getRotationMatrix2D(center, angle, scale)
+            M[:,2] += [tx, ty]
+            
+            image = cv2.warpAffine(image, M, (w, h), flags=cv2.INTER_LINEAR)
+            heatmap = cv2.warpAffine(heatmap, M, (w, h), flags=cv2.INTER_LINEAR)
+
+        # Color jitter
+        if random.random() > 0.5:
+            alpha = random.uniform(0.8, 1.2)  # Contrast
+            beta = random.uniform(-0.1, 0.1)  # Brightness
+            image = cv2.convertScaleAbs(image, alpha=alpha, beta=beta)
+
+        # Add noise
+        if random.random() > 0.5:
+            noise = np.random.normal(0, 0.03, image.shape).astype(np.float32)
+            image = np.clip(image + noise, 0, 1)
+
+        # Motion blur
+        if random.random() > 0.3:
+            size = random.randint(3, 7)
+            kernel = np.zeros((size, size))
+            kernel[int((size-1)/2), :] = np.ones(size)
+            kernel = kernel / size
+            image = cv2.filter2D(image, -1, kernel)
+
         return image, heatmap
 
 class TargetDataset(Dataset):
@@ -72,7 +87,16 @@ class TargetDataset(Dataset):
     def _create_heatmap(self, img_shape, center, sigma=3):
         h, w = img_shape
         y, x = np.indices((h, w))
-        return np.exp(-((x - center[0])**2 + (y - center[1])**2) / (2 * sigma**2))
+        
+        # Create 2D Gaussian
+        heatmap = np.exp(-((x - center[0])**2 + (y - center[1])**2) / (2 * sigma**2))
+        
+        # Normalize to [0, 1] with peak at center
+        heatmap = heatmap / heatmap.max()
+        
+        # Add slight noise to prevent overconfidence
+        heatmap += np.random.normal(0, 0.01, (h, w))
+        return np.clip(heatmap, 0, 1)
 
     def _load_annotations(self):
         try:

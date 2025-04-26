@@ -8,7 +8,8 @@ model:
   backbone: "mobilenet_v2"
   learning_rate: 0.001
   heatmap_sigma: 3.0  # Controls target spread in heatmap
-
+  weight_decay: 0.0001 
+  
 training:
   epochs: 100
   early_stop_patience: 10
