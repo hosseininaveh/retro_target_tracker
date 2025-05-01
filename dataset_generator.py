@@ -38,7 +38,7 @@ def generate_target(center, target_size, base_red_value):
     # Add white circle (smooth transition)
     circle_mask = np.zeros(IMAGE_SIZE, dtype=np.uint8)
     circle_size = max(3, target_size - 4)
-    cv2.circle(circle_mask, (int(center[0]), int(center[1]), circle_size//2, 255, -1)
+    cv2.circle(circle_mask, (int(center[0]), int(center[1])), circle_size//2, 255, -1)  # Fixed this line
     
     # White circle should be 1.5-2x brighter than target red
     white_value = target_red * np.random.uniform(1.5, 2.0)
