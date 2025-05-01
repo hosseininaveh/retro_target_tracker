@@ -11,7 +11,7 @@ model:
   weight_decay: 0.001 
   
 training:
-  epochs: 100
+  epochs: 10
   early_stop_patience: 10
   checkpoint_dir: "checkpoints/"
 

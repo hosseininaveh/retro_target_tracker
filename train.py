@@ -111,7 +111,8 @@ def heatmap_loss(pred, target):
     return total_loss / pred.size(1)  # Average over channels
 
 def calculate_metrics(pred, target):
-    """Compute evaluation metrics with robust error handling"""
+    print("\nDEBUGGING METRICS CALCULATION")  # Debug line
+    
     # Ensure we're working with float tensors
     pred = pred.float()
     target = target.float()
@@ -121,8 +122,10 @@ def calculate_metrics(pred, target):
     target_bin = (target > 0.1).float()
     
     # Only calculate for heatmaps with sufficient activation
-    min_pixels = 5
+    min_pixels = 5  # Try reducing this if needed
     valid = target_bin.sum(dim=(-2,-1)) > min_pixels
+    
+    print(f"Number of valid targets: {valid.sum().item()}/{target.shape[0]}")  # Debug
     
     if valid.any():
         # Calculate IoU
@@ -130,73 +133,215 @@ def calculate_metrics(pred, target):
         union = (pred_bin[valid] + target_bin[valid]).clamp(0,1).sum(dim=(-2,-1))
         iou = (intersection / (union + 1e-6)).mean().item()
         
-        # Calculate center error
-        pred_centers = []
-        target_centers = []
-        for i in range(valid.sum()):
+        # Calculate center error - NEW ROBUST VERSION
+        errors = []
+        for i in range(pred.shape[0]):  # For each sample
             for c in range(pred.shape[1]):  # For each channel
-                if target_bin[valid][i,c].sum() > 0:
-                    pred_centers.append(find_subpixel_center(pred[valid][i,c]))
-                    target_centers.append(find_subpixel_center(target[valid][i,c]))
+                if target_bin[i,c].sum() > 0:  # If target exists
+                    pred_center = find_subpixel_center(pred[i,c])
+                    target_center = find_subpixel_center(target[i,c])
+                    error = torch.norm(pred_center - target_center)
+                    errors.append(error.item())
+                    print(f"Sample {i} target {c} - Error: {error.item():.2f}px")  # Debug
         
-        if pred_centers:
-            errors = [torch.norm(p-t) for p,t in zip(pred_centers, target_centers)]
-            avg_error = sum(errors)/len(errors)
-        else:
-            avg_error = 0.0
+        avg_error = sum(errors)/len(errors) if errors else float('nan')
+        print(f"Calculated average error: {avg_error:.2f}px")  # Debug
     else:
         iou = 0.0
-        avg_error = 0.0
+        avg_error = float('nan')
+        print("No valid targets found for metrics calculation")  # Debug
     
     return iou, avg_error
-
+def visualize_heatmaps(images, pred_heatmaps, true_heatmaps, idx=0):
+    """Enhanced visualization for Colab with proper scaling and display"""
+    import matplotlib.pyplot as plt
+    import numpy as np
+    
+    # Move tensors to CPU and convert to numpy
+    img = images[idx].cpu().float()
+    pred_hm = pred_heatmaps[idx,0].cpu().numpy()
+    true_hm = true_heatmaps[idx,0].cpu().numpy()
+    
+    # Inverse normalize if needed (assuming ImageNet normalization)
+    if img.max() > 1.0:  # Check if normalization was applied
+        inv_normalize = Normalize(
+            mean=[-0.485/0.229, -0.456/0.224, -0.406/0.225],
+            std=[1/0.229, 1/0.224, 1/0.225]
+        )
+        img = inv_normalize(img)
+    img = img.clamp(0,1).permute(1,2,0).numpy()
+    
+    # Find centers
+    pred_center = find_subpixel_center(torch.from_numpy(pred_hm))
+    true_center = find_subpixel_center(torch.from_numpy(true_hm))
+    error = torch.norm(pred_center - true_center).item()
+    
+    # Create figure
+    plt.figure(figsize=(18, 6))
+    
+    # Input image with centers
+    plt.subplot(1, 3, 1)
+    plt.imshow(img)
+    plt.scatter([pred_center[0]], [pred_center[1]], 
+                c='red', marker='x', s=100, linewidths=2, label='Predicted')
+    plt.scatter([true_center[0]], [true_center[1]], 
+                c='lime', marker='+', s=100, linewidths=3, label='Ground Truth')
+    plt.title(f'Input Image\nError: {error:.2f}px')
+    plt.legend()
+    
+    # Predicted heatmap
+    plt.subplot(1, 3, 2)
+    plt.imshow(pred_hm, cmap='hot')
+    plt.scatter([pred_center[0]], [pred_center[1]], 
+                c='cyan', marker='o', s=50, alpha=0.5)
+    plt.colorbar(label='Activation')
+    plt.title('Predicted Heatmap')
+    
+    # Ground truth heatmap
+    plt.subplot(1, 3, 3)
+    plt.imshow(true_hm, cmap='hot')
+    plt.scatter([true_center[0]], [true_center[1]], 
+                c='cyan', marker='o', s=50, alpha=0.5)
+    plt.colorbar(label='Activation')
+    plt.title('Ground Truth Heatmap')
+    
+    plt.tight_layout()
+    plt.show()
+    
+    return error
+    
 def validate(model, dataloader, device, writer=None, epoch=None):
+    """Complete validation function with Colab-friendly visualization"""
     model.eval()
     total_loss = 0.0
     total_iou = 0.0
     total_error = 0.0
     num_batches = 0
+    valid_samples = 0
+    
+    # For visualization
+    viz_images, viz_preds, viz_targets = [], [], []
     
     with torch.no_grad():
-        for images, points in dataloader:
-            # Convert to NCHW format and proper dtype
-            images = images.permute(0, 3, 1, 2).float().to(device)
+        for batch_idx, (images, points) in enumerate(dataloader):
+            # Move data to device
+            images = images.float().to(device)
+            batch_size = images.size(0)
             
-            # Generate heatmaps (will be [B, 2, H, W])
+            # Generate heatmaps
             heatmaps = generate_heatmaps(
                 points, 
                 (images.size(-2), images.size(-1)),
-                sigma=8.0
+                sigma=5.0
             ).to(device)
             
             # Forward pass
             pred_heatmaps = model(images)
-            if num_batches == 0 and epoch % 2 == 0:
-                idx = 0  # First sample
-                img = images[idx].cpu().permute(1,2,0).numpy()
-                pred_hm = pred_heatmaps[idx,0].cpu().numpy()
-                true_hm = heatmaps[idx,0].cpu().numpy()
-                
-                #plt.figure(figsize=(15,5))
-                #plt.subplot(131); plt.imshow(img); plt.title("Image")
-                #plt.subplot(132); plt.imshow(pred_hm); plt.title("Predicted Heatmap")
-                #plt.subplot(133); plt.imshow(true_hm); plt.title("True Heatmap")
-                #plt.show()
-            # Ensure shapes match
-            if pred_heatmaps.shape[-2:] != heatmaps.shape[-2:]:
-                heatmaps = F.interpolate(heatmaps, size=pred_heatmaps.shape[-2:], mode='bilinear')
             
-            # Loss calculation
+            # Store first batch for visualization
+            if batch_idx == 0:
+                viz_images = images[:2].cpu()  # Store first 2 samples
+                viz_preds = pred_heatmaps[:2].cpu()
+                viz_targets = heatmaps[:2].cpu()
+            
+            # Calculate loss
             loss = heatmap_loss(pred_heatmaps, heatmaps)
             total_loss += loss.item()
             
             # Calculate metrics
-            iou, error = calculate_metrics(pred_heatmaps, heatmaps)
-            total_iou += iou
-            total_error += error
+            batch_iou, batch_error = calculate_metrics(pred_heatmaps, heatmaps)
+            
+            if not np.isnan(batch_iou):
+                total_iou += batch_iou * batch_size
+                valid_samples += batch_size
+            if not np.isnan(batch_error):
+                total_error += batch_error * batch_size
+            
             num_batches += 1
     
-    return total_loss/num_batches, total_iou/num_batches, total_error/num_batches
+    # Visualization (only for first batch)
+    if len(viz_images) > 0:
+        for i in range(min(2, len(viz_images))):  # Visualize up to 2 samples
+            visualize_sample(
+                image=viz_images[i],
+                pred_heatmap=viz_preds[i],
+                true_heatmap=viz_targets[i],
+                sample_idx=i,
+                epoch=epoch
+            )
+    
+    # Calculate averages
+    avg_loss = total_loss / num_batches
+    avg_iou = total_iou / valid_samples if valid_samples > 0 else 0
+    avg_error = total_error / valid_samples if valid_samples > 0 else float('nan')
+    
+    # Print summary
+    print(f"\nValidation Summary:")
+    print(f"Samples: {valid_samples}/{len(dataloader.dataset)}")
+    print(f"Loss: {avg_loss:.6f} | IoU: {avg_iou:.4f} | Error: {avg_error:.2f}px")
+    
+    # TensorBoard logging
+    if writer is not None and epoch is not None:
+        writer.add_scalar('Loss/val', avg_loss, epoch)
+        writer.add_scalar('Metrics/IoU', avg_iou, epoch)
+        writer.add_scalar('Metrics/Center_Error', avg_error, epoch)
+    
+    return avg_loss, avg_iou, avg_error
+
+def visualize_sample(image, pred_heatmap, true_heatmap, sample_idx=0, epoch=None):
+    """Enhanced visualization for Colab"""
+    import matplotlib.pyplot as plt
+    
+    # Inverse normalize if needed
+    if image.max() > 1.0:
+        inv_normalize = Normalize(
+            mean=[-0.485/0.229, -0.456/0.224, -0.406/0.225],
+            std=[1/0.229, 1/0.224, 1/0.225]
+        )
+        image = inv_normalize(image)
+    image = image.clamp(0,1).permute(1,2,0).numpy()
+    
+    # Process heatmaps
+    pred_hm = pred_heatmap[0].numpy() if pred_heatmap.dim() == 3 else pred_heatmap.numpy()
+    true_hm = true_heatmap[0].numpy() if true_heatmap.dim() == 3 else true_heatmap.numpy()
+    
+    # Find centers
+    pred_center = find_subpixel_center(torch.from_numpy(pred_hm))
+    true_center = find_subpixel_center(torch.from_numpy(true_hm))
+    error = torch.norm(pred_center - true_center).item()
+    
+    # Create figure
+    plt.figure(figsize=(18, 6))
+    plt.suptitle(f"Sample {sample_idx} | Epoch {epoch} | Error: {error:.2f}px", y=1.05)
+    
+    # Input image
+    plt.subplot(1, 3, 1)
+    plt.imshow(image)
+    plt.scatter([pred_center[0]], [pred_center[1]], 
+                c='red', marker='x', s=100, linewidths=2, label='Predicted')
+    plt.scatter([true_center[0]], [true_center[1]], 
+                c='lime', marker='+', s=100, linewidths=3, label='Ground Truth')
+    plt.title('Input Image')
+    plt.legend()
+    
+    # Predicted heatmap
+    plt.subplot(1, 3, 2)
+    plt.imshow(pred_hm, cmap='hot', vmin=0, vmax=1)
+    plt.scatter([pred_center[0]], [pred_center[1]], 
+                c='cyan', marker='o', s=50, alpha=0.7)
+    plt.colorbar(fraction=0.046, pad=0.04)
+    plt.title('Predicted Heatmap')
+    
+    # Ground truth heatmap
+    plt.subplot(1, 3, 3)
+    plt.imshow(true_hm, cmap='hot', vmin=0, vmax=1)
+    plt.scatter([true_center[0]], [true_center[1]], 
+                c='cyan', marker='o', s=50, alpha=0.7)
+    plt.colorbar(fraction=0.046, pad=0.04)
+    plt.title('Ground Truth Heatmap')
+    
+    plt.tight_layout()
+    plt.show()
 
 def train():
     # Load configuration
