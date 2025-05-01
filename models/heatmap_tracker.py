@@ -3,12 +3,13 @@ import torch.nn as nn
 from torchvision.models import mobilenet_v2, MobileNet_V2_Weights
 
 class HeatmapTracker(nn.Module):
-    def __init__(self):
+    def __init__(self, max_targets=2):
         super().__init__()
+        self.max_targets = max_targets
         weights = MobileNet_V2_Weights.DEFAULT
         self.backbone = mobilenet_v2(weights=weights).features
         
-        # Heatmap head with proper upsampling to 256x256
+        # Heatmap head with proper upsampling to 640x480
         self.heatmap_head = nn.Sequential(
             nn.ConvTranspose2d(1280, 512, kernel_size=4, stride=2, padding=1),
             nn.BatchNorm2d(512),
@@ -26,11 +27,11 @@ class HeatmapTracker(nn.Module):
             nn.BatchNorm2d(64),
             nn.ReLU(),
             
-            nn.Upsample(size=256, mode='bilinear', align_corners=False),
-            nn.Conv2d(64, 1, kernel_size=1),
+            nn.Upsample(size=(480, 640), mode='bilinear', align_corners=False),
+            nn.Conv2d(64, max_targets, kernel_size=1),  # Output channels = max_targets
             nn.Sigmoid()
         )
         
     def forward(self, x):
         features = self.backbone(x)
-        return self.heatmap_head(features)  # Now returns (B, 1, 256, 256)
+        return self.heatmap_head(features)  # Now returns (B, max_targets, H, W)

@@ -7,11 +7,12 @@ from sklearn.model_selection import train_test_split
 
 # Configuration
 DATASET_ROOT = "data"
-IMAGE_SIZE = (256, 256)  # Same as config
-TARGET_SIZES = [7, 9, 11, 13,15,17]  # Varying target sizes
+IMAGE_SIZE = (640, 480)  # Updated to 640x480
+TARGET_SIZES = [7, 9, 11, 13, 15, 17]  # Varying target sizes
 NUM_IMAGES = 3000  # Total images to generate
 TEST_RATIO = 0.15
 VAL_RATIO = 0.15
+MAX_TARGETS = 2  # Maximum number of targets per image
 
 def generate_target(center, target_size, base_red_value):
     """Generate a synthetic target with smooth color transitions"""
@@ -26,8 +27,8 @@ def generate_target(center, target_size, base_red_value):
     mask = np.zeros(IMAGE_SIZE, dtype=np.uint8)
     half_size = target_size // 2
     cv2.rectangle(mask, 
-                 (center[0]-half_size, center[1]-half_size),
-                 (center[0]+half_size, center[1]+half_size), 
+                 (int(center[0]-half_size), int(center[1]-half_size)),
+                 (int(center[0]+half_size), int(center[1]+half_size)), 
                  255, -1)
     
     # Apply smooth red target (slightly brighter than background)
@@ -37,7 +38,7 @@ def generate_target(center, target_size, base_red_value):
     # Add white circle (smooth transition)
     circle_mask = np.zeros(IMAGE_SIZE, dtype=np.uint8)
     circle_size = max(3, target_size - 4)
-    cv2.circle(circle_mask, center, circle_size//2, 255, -1)
+    cv2.circle(circle_mask, (int(center[0]), int(center[1]), circle_size//2, 255, -1)
     
     # White circle should be 1.5-2x brighter than target red
     white_value = target_red * np.random.uniform(1.5, 2.0)
@@ -75,24 +76,47 @@ def generate_dataset():
         if np.random.rand() < 0.1:  # Occasionally change direction
             red_delta *= -1
         
-        # Random position (avoid edges)
-        margin = 40
-        x = np.random.randint(margin, IMAGE_SIZE[0] - margin)
-        y = np.random.randint(margin, IMAGE_SIZE[1] - margin)
+        # Create blank image
+        img = np.zeros(IMAGE_SIZE + (3,), dtype=np.float32)
         
-        # Random target size
-        target_size = np.random.choice(TARGET_SIZES)
+        # Generate between 1 and MAX_TARGETS targets
+        num_targets = np.random.randint(1, MAX_TARGETS+1)
+        target_info = []
         
-        # Generate image
-        img = generate_target((x, y), target_size, base_red)
+        for _ in range(num_targets):
+            # Random position (avoid edges and other targets)
+            margin = 40
+            min_distance = 100  # Minimum distance between targets
+            
+            while True:
+                x = np.random.uniform(margin, IMAGE_SIZE[0] - margin)
+                y = np.random.uniform(margin, IMAGE_SIZE[1] - margin)
+                
+                # Check distance to other targets
+                valid_position = True
+                for (tx, ty, _) in target_info:
+                    if np.sqrt((x-tx)**2 + (y-ty)**2) < min_distance:
+                        valid_position = False
+                        break
+                
+                if valid_position:
+                    break
+            
+            # Random target size
+            target_size = np.random.choice(TARGET_SIZES)
+            
+            # Generate target and add to image
+            target_img = generate_target((x, y), target_size, base_red)
+            img = np.maximum(img, target_img)
+            
+            # Store target info with sub-pixel accuracy
+            target_info.append((x, y, target_size))
         
         # Store metadata
         img_name = f"target_{i:04d}.png"
         all_data.append({
             "image_path": img_name,
-            "x": float(x),
-            "y": float(y),
-            "target_size": target_size
+            "targets": target_info  # List of (x, y, size) tuples
         })
         
         # Save image
@@ -104,11 +128,25 @@ def generate_dataset():
 
     # Save datasets
     def save_subset(data, subset):
-        df = pd.DataFrame(data)
+        # Convert to DataFrame with proper format
+        records = []
+        for item in data:
+            for target_idx, (x, y, size) in enumerate(item["targets"]):
+                records.append({
+                    "image_path": item["image_path"],
+                    "target_idx": target_idx,
+                    "x": x,
+                    "y": y,
+                    "target_size": size
+                })
+        
+        df = pd.DataFrame(records)
         df.to_csv(f"{DATASET_ROOT}/{subset}/annotations/annotations.csv", index=False)
-        for _, row in df.iterrows():
-            os.rename(f"{DATASET_ROOT}/temp_{row['image_path']}", 
-                     f"{DATASET_ROOT}/{subset}/images/{row['image_path']}")
+        
+        # Save images
+        for item in data:
+            os.rename(f"{DATASET_ROOT}/temp_{item['image_path']}", 
+                     f"{DATASET_ROOT}/{subset}/images/{item['image_path']}")
 
     save_subset(train_data, "train")
     save_subset(val_data, "val")

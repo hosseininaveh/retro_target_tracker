@@ -33,21 +33,27 @@ def load_config(config_path):
 
 def heatmap_loss(pred, target):
     # Handle size mismatches
-    if target.dim() == 3:
-        target = target.unsqueeze(1)
     if pred.size()[-2:] != target.size()[-2:]:
         target = F.interpolate(target.float(), size=pred.size()[-2:], mode='bilinear')
     
-    # Focal loss
+    # Focal loss for each target channel
     alpha = 2.0
     beta = 4.0
-    pos_mask = (target > 0.5).float()
-    neg_mask = (target <= 0.5).float()
+    total_loss = 0.0
     
-    pos_loss = -pos_mask * (1 - pred)**alpha * torch.log(pred + 1e-12)
-    neg_loss = -neg_mask * (1 - target)**beta * (pred)**alpha * torch.log(1 - pred + 1e-12)
+    for i in range(pred.size(1)):  # Loop over target channels
+        pred_ch = pred[:, i:i+1]
+        target_ch = target[:, i:i+1]
+        
+        pos_mask = (target_ch > 0.5).float()
+        neg_mask = (target_ch <= 0.5).float()
+        
+        pos_loss = -pos_mask * (1 - pred_ch)**alpha * torch.log(pred_ch + 1e-12)
+        neg_loss = -neg_mask * (1 - target_ch)**beta * (pred_ch)**alpha * torch.log(1 - pred_ch + 1e-12)
+        
+        total_loss += (pos_loss + neg_loss).mean()
     
-    return (pos_loss + neg_loss).mean()
+    return total_loss / pred.size(1)  # Average over channels
 
 def calculate_metrics(pred, target):
     """Compute evaluation metrics with proper dimension handling"""
