@@ -1,102 +1,128 @@
-import torch
 import cv2
+import torch
 import numpy as np
 from models import HeatmapTracker
-from utils.visualization import draw_tracking_result
+from visualization import draw_tracking_result
+from subpixel import SubpixelDecoder
 
-class TargetTracker:
-    def __init__(self, model_path, device='cuda'):
-        """Initialize tracker with trained model"""
-        self.device = torch.device(device)
-        self.model = HeatmapTracker().to(self.device)
-        self.model.load_state_dict(torch.load(model_path))
+class VideoTracker:
+    def __init__(self, model_path, device='cuda', max_targets=2):
+        self.device = torch.device(device if torch.cuda.is_available() else 'cpu')
+        self.max_targets = max_targets
+        self.model = HeatmapTracker(max_targets=max_targets).to(self.device)
+        self.model.load_state_dict(torch.load(model_path, map_location=self.device))
         self.model.eval()
+        self.subpixel_decoder = SubpixelDecoder()
         
-        # Warmup
-        dummy_input = torch.randn(1, 3, 256, 256).to(self.device)
-        with torch.no_grad():
-            _ = self.model(dummy_input)
-
     def preprocess(self, frame):
-        """Convert frame to model input tensor"""
-        # Resize and normalize
-        frame = cv2.resize(frame, (256, 256))
-        frame = cv2.cvtColor(frame, cv2.COLOR_BGR2RGB)
-        tensor = torch.from_numpy(frame).float().permute(2,0,1) / 255.0
-        return tensor.unsqueeze(0).to(self.device)
-
-    def postprocess(self, coords, input_shape, output_shape):
-        """Convert normalized coords to original image coordinates"""
-        # Scale coordinates
-        x_scale = output_shape[1] / input_shape[1]
-        y_scale = output_shape[0] / input_shape[0]
-        coords[0] *= x_scale
-        coords[1] *= y_scale
-        return coords.astype(int)
-
-    def track(self, frame):
-        """Track targets in a single frame"""
-        original_shape = frame.shape[:2]
-        input_tensor = self.preprocess(frame)
-        
+        """Convert frame to model input format"""
+        frame = cv2.cvtColor(frame, cv2.COLOR_BGR2RGB) / 255.0
+        frame = torch.from_numpy(frame).permute(2, 0, 1).float().unsqueeze(0)
+        return frame.to(self.device)
+    
+    def detect(self, frame):
+        """Detect targets with sub-pixel accuracy"""
         with torch.no_grad():
-            _, coords = self.model(input_tensor)
+            input_tensor = self.preprocess(frame)
+            heatmaps = self.model(input_tensor).squeeze(0).cpu().numpy()
         
-        # Convert to numpy array
-        coords = coords[0].cpu().numpy()
+        targets = []
+        confidences = []
         
-        # Post-process coordinates
-        return self.postprocess(coords, (256, 256), original_shape), 1.0  # Return coords and confidence
-
-    def track_video(self, video_path, output_path=None):
-        """Process video file or camera stream"""
-        # Create output directory if needed
-        if output_path:
-            import os
-            os.makedirs(os.path.dirname(output_path), exist_ok=True)
-        
-        cap = cv2.VideoCapture(video_path if video_path else 0)
-        if not cap.isOpened():
-            print(f"Error: Could not open video {video_path}")
-            return
+        for i in range(self.max_targets):
+            heatmap = heatmaps[i] if self.max_targets > 1 else heatmaps
             
+            # Get pixel-level center
+            y, x = np.unravel_index(heatmap.argmax(), heatmap.shape)
+            confidence = heatmap[y, x]
+            
+            if confidence < 0.1:  # Skip weak detections
+                continue
+            
+            # Sub-pixel refinement
+            if 0 < x < heatmap.shape[1]-1 and 0 < y < heatmap.shape[0]-1:
+                dx = 0.5 * (heatmap[y, x+1] - heatmap[y, x-1])
+                dy = 0.5 * (heatmap[y+1, x] - heatmap[y-1, x])
+                x += dx
+                y += dy
+            
+            targets.append((x, y))
+            confidences.append(confidence)
+        
+        # Sort targets left to right by x-coordinate (point0 should be leftmost)
+        if len(targets) == 2:
+            if targets[0][0] > targets[1][0]:
+                targets = [targets[1], targets[0]]
+                confidences = [confidences[1], confidences[0]]
+        
+        return targets, confidences, heatmaps
+    
+    def process_video(self, video_path, output_path=None, show=True):
+        """Process video file and display/save results"""
+        cap = cv2.VideoCapture(video_path)
+        if not cap.isOpened():
+            raise ValueError(f"Could not open video file: {video_path}")
+        
+        # Get video properties
+        fps = cap.get(cv2.CAP_PROP_FPS)
+        width = int(cap.get(cv2.CAP_PROP_FRAME_WIDTH))
+        height = int(cap.get(cv2.CAP_PROP_FRAME_HEIGHT))
+        
+        # Initialize video writer if output path is specified
         if output_path:
             fourcc = cv2.VideoWriter_fourcc(*'XVID')
-            fps = cap.get(cv2.CAP_PROP_FPS)
-            width = int(cap.get(cv2.CAP_PROP_FRAME_WIDTH))
-            height = int(cap.get(cv2.CAP_PROP_FRAME_HEIGHT))
             out = cv2.VideoWriter(output_path, fourcc, fps, (width, height))
         
+        frame_count = 0
         while cap.isOpened():
             ret, frame = cap.read()
             if not ret:
                 break
+                
+            # Detect targets
+            targets, confidences, _ = self.detect(frame)
             
-            # Track and visualize
-            coords, confidence = self.track(frame)
-            x, y = coords[0], coords[1]
-            vis_frame = draw_tracking_result(frame, (x, y))
+            # Visualize results
+            for i, (point, conf) in enumerate(zip(targets, confidences)):
+                color = (0, 255, 0) if i == 0 else (0, 0, 255)  # Green for point0, Red for point1
+                label = f"Point{i} ({conf:.2f})"
+                
+                # Draw center point
+                cv2.circle(frame, (int(point[0]), int(point[1])), 5, color, -1)
+                
+                # Draw label
+                cv2.putText(frame, label, (int(point[0]) + 10, int(point[1]) - 10),
+                            cv2.FONT_HERSHEY_SIMPLEX, 0.5, color, 2)
             
-            cv2.imshow('Tracking', vis_frame)
+            # Display frame
+            if show:
+                cv2.imshow('Target Tracking', frame)
+                if cv2.waitKey(1) & 0xFF == ord('q'):
+                    break
+            
+            # Write frame to output video
             if output_path:
-                out.write(vis_frame)
+                out.write(frame)
             
-            if cv2.waitKey(1) & 0xFF == 27:
-                break
+            frame_count += 1
+            print(f"Processed frame {frame_count}", end='\r')
         
+        # Clean up
         cap.release()
         if output_path:
             out.release()
-        cv2.destroyAllWindows()
+        if show:
+            cv2.destroyAllWindows()
+        
+        print(f"\nFinished processing {frame_count} frames")
 
 if __name__ == "__main__":
-    import argparse
+    # Initialize tracker with your trained model
+    tracker = VideoTracker(model_path="path/to/your/best_model.pth", max_targets=2)
     
-    parser = argparse.ArgumentParser()
-    parser.add_argument('--model', required=True, help='Path to trained model')
-    parser.add_argument('--video', default=None, help='Video file path (leave empty for camera)')
-    parser.add_argument('--output', default=None, help='Output video path')
-    args = parser.parse_args()
-    
-    tracker = TargetTracker(args.model)
-    tracker.track_video(args.video, args.output)
+    # Process video file
+    tracker.process_video(
+        video_path="left.avi",
+        output_path="output.avi",  # Set to None if you don't want to save
+        show=True
+    )

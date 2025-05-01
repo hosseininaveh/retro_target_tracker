@@ -356,6 +356,13 @@ def train():
     
     # Initialize model
     model = HeatmapTracker(max_targets=2).to(device)  # Modified for 2 targets
+    pretrained_path = "./best_model_two_points.pth"  # Path to your existing model
+    if os.path.exists(pretrained_path):
+        print(f"Loading pretrained weights from {pretrained_path}")
+        model.load_state_dict(torch.load(pretrained_path, map_location=device))
+        print("Pretrained weights loaded successfully")
+    else:
+        print("No pretrained weights found, starting from scratch")
     optimizer = torch.optim.AdamW(
         model.parameters(),
         lr=config['model']['learning_rate'],
