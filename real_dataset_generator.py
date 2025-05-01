@@ -10,8 +10,8 @@ from sklearn.model_selection import train_test_split
 DATASET_ROOT = "enhanced_dataset"
 IMAGE_PAIRS = [
     {
-        "left": "/content/left_frame.jpg",
-        "right": "/content/right_frame.jpg",
+        "left": "./left_frame.jpg",
+        "right": "./right_frame.jpg",
         "left_points": {
             "point0": (272, 396),
             "point1": (269, 412)
@@ -22,8 +22,8 @@ IMAGE_PAIRS = [
         }
     },
     {
-        "left": "/content/c_left.jpg",
-        "right": "/content/c_right.jpg",
+        "left": "./c_left.jpg",
+        "right": "./c_right.jpg",
         "left_points": {
             "point0": (306, 365),
             "point1": (302, 384)
