@@ -35,7 +35,7 @@ class TargetDataset(Dataset):
     def __getitem__(self, idx):
         img_path = os.path.join(self.image_dir, 'images', self.annotations.iloc[idx]['image_path'])
         image = cv2.imread(img_path)
-        image = cv2.cvtColor(image, cv2.COLOR_BGR2RGB)
+        image = cv2.cvtColor(image, cv2.COLOR_BGR2RGB)  # Convert to RGB
         
         # Get both points
         points = np.array([
@@ -45,14 +45,17 @@ class TargetDataset(Dataset):
         
         if self.transform:
             if isinstance(self.transform, A.Compose):
-                # Albumentations style transform
+                # For albumentations
                 transformed = self.transform(image=image, keypoints=points)
-                image = transformed['image']
+                image = transformed['image']  # This will be numpy array in HWC format
                 points = np.array(transformed['keypoints'])
+                
+                # Convert to CHW format immediately
+                image = torch.from_numpy(image).permute(2, 0, 1).float()
             else:
-                # PyTorch style transform
+                # For PyTorch transforms
                 image, points = self.transform(image, points)
-            
+                
         return image, points
 
 class Augmentation:

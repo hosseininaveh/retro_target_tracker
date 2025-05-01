@@ -143,8 +143,8 @@ def validate(model, dataloader, device, writer=None, epoch=None):
     with torch.no_grad():
         for images, points in dataloader:
             # Ensure proper tensor format (NCHW)
-            images = images.permute(0, 3, 1, 2).to(device)  # Convert from NHWC to NCHW
-            
+            #images = images.permute(0, 3, 1, 2).to(device)  # Convert from NHWC to NCHW
+            images = images.to(device)
             # Generate heatmaps from points
             heatmaps = generate_heatmaps(
                 points, 
@@ -247,8 +247,8 @@ def train():
         
         for batch_idx, (images, points) in enumerate(train_loader):
             # Ensure proper tensor format (NCHW)
-            images = images.permute(0, 3, 1, 2).to(device)  # Convert from NHWC to NCHW
-            
+            #images = images.permute(0, 3, 1, 2).to(device)  # Convert from NHWC to NCHW
+            images = images.to(device)
             # Generate heatmaps from points
             heatmaps = generate_heatmaps(
                 points,
