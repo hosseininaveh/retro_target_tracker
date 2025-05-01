@@ -37,7 +37,7 @@ def load_config(config_path):
                 raise ValueError(f"Missing configuration key: {section}.{key}")
     return config
 
-def generate_heatmaps(points, img_size, sigma=3.0):
+def generate_heatmaps(points, img_size, sigma=5.0):
     """Generate heatmaps from point coordinates for both targets"""
     height, width = img_size
     batch_size = points.shape[0]
@@ -106,13 +106,20 @@ def calculate_metrics(pred, target):
         target_ch = target[:, i]
         
         # Binarize
-        pred_bin = (pred_ch > 0.5).float()
-        target_bin = (target_ch > 0.5).float()
+        pred_bin = (pred_ch > 0.3).float()
+        target_bin = (target_ch > 0.3).float()
+
+        # Add area check
+        min_area = 10  # Minimum expected target area
+        valid = (target_bin.sum(dim=(-2,-1)) > min_area
         
-        # IoU calculation
-        intersection = (pred_bin * target_bin).sum(dim=(-2, -1))
-        union = ((pred_bin + target_bin) > 0).float().sum(dim=(-2, -1))
-        iou = (intersection / (union + 1e-6)).mean().item()
+        if valid.any():
+             intersection = (pred_bin[valid] * target_bin[valid]).sum(dim=(-2,-1))
+             union = ((pred_bin[valid] + target_bin[valid]) > 0).float().sum(dim=(-2,-1))
+             iou = (intersection / (union + 1e-6)).mean().item()
+        else:
+             iou = 0.0
+
         total_iou += iou
         
         # Center error calculation

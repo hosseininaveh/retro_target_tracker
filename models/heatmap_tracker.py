@@ -24,6 +24,7 @@ class HeatmapTracker(nn.Module):
             nn.BatchNorm2d(64),
             nn.ReLU(),
             nn.Upsample(size=(480, 640), mode='bilinear', align_corners=False),
+            nn.Dropout(0.2),  # Add dropout
             nn.Conv2d(64, max_targets, kernel_size=1),
             nn.Sigmoid()
         )
