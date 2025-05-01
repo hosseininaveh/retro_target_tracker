@@ -37,7 +37,7 @@ def load_config(config_path):
                 raise ValueError(f"Missing configuration key: {section}.{key}")
     return config
 
-def generate_heatmaps(points, img_size, sigma=5.0):
+def generate_heatmaps(points, img_size, sigma=8.0):
     """Generate heatmaps from point coordinates for both targets"""
     height, width = img_size
     batch_size = points.shape[0]
@@ -60,7 +60,12 @@ def generate_heatmaps(points, img_size, sigma=5.0):
                 # Create Gaussian heatmap
                 heatmap = torch.exp(-dist_sq / (2 * sigma**2))
                 heatmaps[i, j] = heatmap
-                
+    print("Sample heatmap values:")
+    print(heatmaps[0,0].max().item())  # Should be ~1.0 at target location
+    print(heatmaps[0,0].mean().item()) # Should be very low (~0.001)
+    plt.imshow(heatmaps[0,0].cpu().numpy())
+    plt.title("Generated Heatmap")
+    plt.show()
     return heatmaps
 
 def heatmap_loss(pred, target):
@@ -89,55 +94,29 @@ def heatmap_loss(pred, target):
     return total_loss / pred.size(1)  # Average over channels
 
 def calculate_metrics(pred, target):
-    """Compute evaluation metrics for both points"""
-    # Ensure correct dimensions
-    if len(pred.shape) == 4:
-        pred = pred.squeeze(1) if pred.size(1) == 1 else pred
-    if len(target.shape) == 4:
-        target = target.squeeze(1) if target.size(1) == 1 else target
+    # Use lower threshold for binary conversion
+    pred_bin = (pred > 0.1).float()  # Changed from 0.5
+    target_bin = (target > 0.1).float()
     
-    # Initialize metrics
-    total_iou = 0.0
-    total_error = 0.0
-    num_points = 0
+    # Only calculate for heatmaps with sufficient activation
+    min_pixels = 5
+    valid = target_bin.sum(dim=(-2,-1)) > min_pixels
     
-    for i in range(pred.size(1)):  # For each point channel
-        pred_ch = pred[:, i]
-        target_ch = target[:, i]
+    if valid.any():
+        intersection = (pred_bin[valid] * target_bin[valid]).sum()
+        union = (pred_bin[valid] + target_bin[valid]).clamp(0,1).sum()
+        iou = (intersection / (union + 1e-6)).item()
         
-        # Binarize
-        pred_bin = (pred_ch > 0.3).float()
-        target_bin = (target_ch > 0.3).float()
-
-        # Add area check
-        min_area = 10  # Minimum expected target area
-        valid = (target_bin.sum(dim=(-2,-1)) > min_area)
-        
-        if valid.any():
-             intersection = (pred_bin[valid] * target_bin[valid]).sum(dim=(-2,-1))
-             union = ((pred_bin[valid] + target_bin[valid]) > 0).float().sum(dim=(-2,-1))
-             iou = (intersection / (union + 1e-6)).mean().item()
-        else:
-             iou = 0.0
-
-        total_iou += iou
-        
-        # Center error calculation
-        errors = []
-        for j in range(pred_ch.shape[0]):
-            pred_center = np.unravel_index(pred_ch[j].argmax().item(), pred_ch.shape[-2:])
-            target_center = np.unravel_index(target_ch[j].argmax().item(), target_ch.shape[-2:])
-            error = np.sqrt((pred_center[0]-target_center[0])**2 + 
-                          (pred_center[1]-target_center[1])**2)
-            errors.append(error)
-        
-        total_error += np.mean(errors) if errors else 0
-        num_points += 1 if errors else 0
+        # Calculate center error only for valid predictions
+        pred_centers = [find_subpixel_center(p) for p in pred[valid]]
+        target_centers = [find_subpixel_center(t) for t in target[valid]]
+        errors = [torch.norm(p-t) for p,t in zip(pred_centers, target_centers)]
+        avg_error = sum(errors)/len(errors) if errors else 0
+    else:
+        iou = 0.0
+        avg_error = 0.0
     
-    avg_iou = total_iou / num_points if num_points > 0 else 0
-    avg_error = total_error / num_points if num_points > 0 else 0
-    
-    return avg_iou, avg_error
+    return iou, avg_error
 
 def validate(model, dataloader, device, writer=None, epoch=None):
     model.eval()
@@ -155,7 +134,7 @@ def validate(model, dataloader, device, writer=None, epoch=None):
             heatmaps = generate_heatmaps(
                 points, 
                 (images.size(-2), images.size(-1)),
-                sigma=3.0
+                sigma=8.0
             ).to(device)
             
             # Forward pass
@@ -308,7 +287,17 @@ def train():
             if no_improve >= patience:
                 print(f"\nEarly stopping triggered at epoch {epoch}")
                 break
-        
+        if epoch % 1 == 0:  # Every epoch
+            idx = 0  # First sample in batch
+            img = inv_normalize(images[idx]).cpu().permute(1,2,0).numpy()
+            pred_hm = pred_heatmaps[idx,0].cpu().detach().numpy()
+            true_hm = heatmaps[idx,0].cpu().numpy()
+    
+            plt.figure(figsize=(15,5))
+            plt.subplot(131); plt.imshow(img); plt.title("Image")
+            plt.subplot(132); plt.imshow(pred_hm); plt.title("Predicted Heatmap")
+            plt.subplot(133); plt.imshow(true_hm); plt.title("True Heatmap")
+            plt.show()
         # Save periodic checkpoints
         if epoch % 5 == 0 or epoch == config['training']['epochs'] - 1:
             torch.save({
