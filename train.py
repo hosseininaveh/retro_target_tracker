@@ -111,7 +111,7 @@ def calculate_metrics(pred, target):
 
         # Add area check
         min_area = 10  # Minimum expected target area
-        valid = (target_bin.sum(dim=(-2,-1)) > min_area
+        valid = (target_bin.sum(dim=(-2,-1)) > min_area)
         
         if valid.any():
              intersection = (pred_bin[valid] * target_bin[valid]).sum(dim=(-2,-1))
