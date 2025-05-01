@@ -12,7 +12,12 @@ from models import HeatmapTracker
 from utils.visualization import plot_heatmap_comparison
 from utils.data_loader import TargetDataset, Augmentation
 import matplotlib.pyplot as plt
+from torchvision.transforms import Normalize
 
+inv_normalize = Normalize(
+    mean=[-0.485/0.229, -0.456/0.224, -0.406/0.225],
+    std=[1/0.229, 1/0.224, 1/0.225]
+)
 # Suppress unnecessary warnings
 import warnings
 warnings.filterwarnings("ignore", category=UserWarning)
@@ -72,12 +77,12 @@ def generate_heatmaps(points, img_size, sigma=8.0):
                 # Create Gaussian heatmap
                 heatmap = torch.exp(-dist_sq / (2 * sigma**2))
                 heatmaps[i, j] = heatmap
-    print("Sample heatmap values:")
-    print(heatmaps[0,0].max().item())  # Should be ~1.0 at target location
-    print(heatmaps[0,0].mean().item()) # Should be very low (~0.001)
-    plt.imshow(heatmaps[0,0].cpu().numpy())
-    plt.title("Generated Heatmap")
-    plt.show()
+    #print("Sample heatmap values:")
+    #print(heatmaps[0,0].max().item())  # Should be ~1.0 at target location
+    #print(heatmaps[0,0].mean().item()) # Should be very low (~0.001)
+    #plt.imshow(heatmaps[0,0].cpu().numpy())
+    #plt.title("Generated Heatmap")
+    #plt.show()
     return heatmaps
 
 def heatmap_loss(pred, target):
@@ -172,11 +177,11 @@ def validate(model, dataloader, device, writer=None, epoch=None):
                 pred_hm = pred_heatmaps[idx,0].cpu().numpy()
                 true_hm = heatmaps[idx,0].cpu().numpy()
                 
-                plt.figure(figsize=(15,5))
-                plt.subplot(131); plt.imshow(img); plt.title("Image")
-                plt.subplot(132); plt.imshow(pred_hm); plt.title("Predicted Heatmap")
-                plt.subplot(133); plt.imshow(true_hm); plt.title("True Heatmap")
-                plt.show()
+                #plt.figure(figsize=(15,5))
+                #plt.subplot(131); plt.imshow(img); plt.title("Image")
+                #plt.subplot(132); plt.imshow(pred_hm); plt.title("Predicted Heatmap")
+                #plt.subplot(133); plt.imshow(true_hm); plt.title("True Heatmap")
+                #plt.show()
             # Ensure shapes match
             if pred_heatmaps.shape[-2:] != heatmaps.shape[-2:]:
                 heatmaps = F.interpolate(heatmaps, size=pred_heatmaps.shape[-2:], mode='bilinear')
