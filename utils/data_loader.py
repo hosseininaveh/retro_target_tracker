@@ -45,20 +45,14 @@ class TargetDataset(Dataset):
         
         if self.transform:
             if isinstance(self.transform, A.Compose):
-                # For albumentations
                 transformed = self.transform(image=image, keypoints=points)
                 image = transformed['image']  # This will be numpy array in HWC format
-                
-                
-                # Convert to float32 and normalize if not already done
-                if image.dtype != np.float32:
-                    image = image.astype(np.float32) / 255.0
-                    # Convert to CHW and tensor
-                    image = torch.from_numpy(image).permute(2, 0, 1).float()
-                    points = np.array(transformed['keypoints'])
-                else:
-                    image, points = self.transform(image, points)
-                   
+                # Convert to CHW format immediately
+                image = torch.from_numpy(image).permute(2, 0, 1).float()
+                points = np.array(transformed['keypoints'])
+            else:
+                image, points = self.transform(image, points)
+        
         return image, points
 
 class Augmentation:

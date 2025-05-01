@@ -41,7 +41,7 @@ def generate_heatmaps(points, img_size, sigma=3.0):
     """Generate heatmaps from point coordinates for both targets"""
     height, width = img_size
     batch_size = points.shape[0]
-    heatmaps = torch.zeros(batch_size, 2, height, width)  # 2 channels for two points
+    heatmaps = torch.zeros(batch_size, 2, height, width)  # CHANNELS FIRST format
     
     for i in range(batch_size):
         for j in range(2):  # For each target point
@@ -49,8 +49,8 @@ def generate_heatmaps(points, img_size, sigma=3.0):
             if x >= 0 and y >= 0:  # Only create heatmap if point is valid
                 # Create meshgrid (note the order: height first, then width)
                 y_grid, x_grid = torch.meshgrid(
-                    torch.arange(height, dtype=torch.float32),
-                    torch.arange(width, dtype=torch.float32),
+                    torch.arange(height, dtype=torch.float32, device=points.device),
+                    torch.arange(width, dtype=torch.float32, device=points.device),
                     indexing='ij'
                 )
                 
@@ -133,7 +133,6 @@ def calculate_metrics(pred, target):
     return avg_iou, avg_error
 
 def validate(model, dataloader, device, writer=None, epoch=None):
-    """Enhanced validation with robust dimension handling"""
     model.eval()
     total_loss = 0.0
     total_iou = 0.0
@@ -142,19 +141,10 @@ def validate(model, dataloader, device, writer=None, epoch=None):
     
     with torch.no_grad():
         for images, points in dataloader:
-            # Convert to float32 if needed
-            if images.dtype != torch.float32:
-                images = images.float()
+            # Convert to NCHW format and proper dtype
+            images = images.permute(0, 3, 1, 2).float().to(device)
             
-            # Normalize if not already done (assuming [0,255] input)
-            if images.max() > 1.0:
-                images = images / 255.0
-                
-            images = images.to(device)
-            # Ensure proper tensor format (NCHW)
-            #images = images.permute(0, 3, 1, 2).to(device)  # Convert from NHWC to NCHW
-
-            # Generate heatmaps from points
+            # Generate heatmaps (will be [B, 2, H, W])
             heatmaps = generate_heatmaps(
                 points, 
                 (images.size(-2), images.size(-1)),
@@ -163,6 +153,10 @@ def validate(model, dataloader, device, writer=None, epoch=None):
             
             # Forward pass
             pred_heatmaps = model(images)
+            
+            # Ensure shapes match
+            if pred_heatmaps.shape[-2:] != heatmaps.shape[-2:]:
+                heatmaps = F.interpolate(heatmaps, size=pred_heatmaps.shape[-2:], mode='bilinear')
             
             # Loss calculation
             loss = heatmap_loss(pred_heatmaps, heatmaps)
@@ -174,18 +168,7 @@ def validate(model, dataloader, device, writer=None, epoch=None):
             total_error += error
             num_batches += 1
     
-    # Compute averages
-    avg_loss = total_loss / num_batches if num_batches > 0 else 0
-    avg_iou = total_iou / num_batches if num_batches > 0 else 0
-    avg_error = total_error / num_batches if num_batches > 0 else 0
-    
-    # Logging
-    if writer is not None and epoch is not None:
-        writer.add_scalar('Loss/val', avg_loss, epoch)
-        writer.add_scalar('Metrics/IoU', avg_iou, epoch)
-        writer.add_scalar('Metrics/Center_Error', avg_error, epoch)
-    
-    return avg_loss, avg_iou, avg_error
+    return total_loss/num_batches, total_iou/num_batches, total_error/num_batches
 
 def train():
     # Load configuration
