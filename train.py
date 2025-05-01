@@ -9,8 +9,14 @@ import os
 import numpy as np
 from datetime import datetime
 from models import HeatmapTracker
-from utils.data_loader import TargetDataset, Augmentation
 from utils.visualization import plot_heatmap_comparison
+from utils.data_loader import TargetDataset, Augmentation
+import matplotlib.pyplot as plt
+
+# Suppress unnecessary warnings
+import warnings
+warnings.filterwarnings("ignore", category=UserWarning)
+os.environ['TF_CPP_MIN_LOG_LEVEL'] = '3'  # Suppress TensorFlow logging
 
 def load_config(config_path):
     """Load and validate configuration"""
@@ -19,8 +25,8 @@ def load_config(config_path):
     
     required_keys = {
         'training': ['checkpoint_dir', 'epochs', 'early_stop_patience'],
-        'data': ['train_path', 'val_path', 'batch_size'],
-        'model': ['learning_rate', 'weight_decay']
+        'data': ['train_path', 'val_path', 'batch_size', 'input_size'],
+        'model': ['learning_rate', 'weight_decay', 'heatmap_sigma']
     }
     
     for section, keys in required_keys.items():
@@ -31,12 +37,39 @@ def load_config(config_path):
                 raise ValueError(f"Missing configuration key: {section}.{key}")
     return config
 
+def generate_heatmaps(points, img_size, sigma=3.0):
+    """Generate heatmaps from point coordinates for both targets"""
+    height, width = img_size
+    batch_size = points.shape[0]
+    heatmaps = torch.zeros(batch_size, 2, height, width)  # 2 channels for two points
+    
+    for i in range(batch_size):
+        for j in range(2):  # For each target point
+            x, y = points[i, j]
+            if x >= 0 and y >= 0:  # Only create heatmap if point is valid
+                # Create meshgrid (note the order: height first, then width)
+                y_grid, x_grid = torch.meshgrid(
+                    torch.arange(height, dtype=torch.float32),
+                    torch.arange(width, dtype=torch.float32),
+                    indexing='ij'
+                )
+                
+                # Calculate squared distances
+                dist_sq = (x_grid - x)**2 + (y_grid - y)**2
+                
+                # Create Gaussian heatmap
+                heatmap = torch.exp(-dist_sq / (2 * sigma**2))
+                heatmaps[i, j] = heatmap
+                
+    return heatmaps
+
 def heatmap_loss(pred, target):
+    """Focal loss for heatmap prediction"""
     # Handle size mismatches
     if pred.size()[-2:] != target.size()[-2:]:
         target = F.interpolate(target.float(), size=pred.size()[-2:], mode='bilinear')
     
-    # Focal loss for each target channel
+    # Focal loss parameters
     alpha = 2.0
     beta = 4.0
     total_loss = 0.0
@@ -56,34 +89,48 @@ def heatmap_loss(pred, target):
     return total_loss / pred.size(1)  # Average over channels
 
 def calculate_metrics(pred, target):
-    """Compute evaluation metrics with proper dimension handling"""
+    """Compute evaluation metrics for both points"""
     # Ensure correct dimensions
     if len(pred.shape) == 4:
-        pred = pred.squeeze(1)  # Remove channel dim if present
+        pred = pred.squeeze(1) if pred.size(1) == 1 else pred
     if len(target.shape) == 4:
-        target = target.squeeze(1)
+        target = target.squeeze(1) if target.size(1) == 1 else target
     
-    # Binarize
-    pred_bin = (pred > 0.5).float()
-    target_bin = (target > 0.5).float()
+    # Initialize metrics
+    total_iou = 0.0
+    total_error = 0.0
+    num_points = 0
     
-    # IoU calculation
-    intersection = (pred_bin * target_bin).sum(dim=(-2, -1))  # Sum over last two dims (H,W)
-    union = ((pred_bin + target_bin) > 0).float().sum(dim=(-2, -1))
-    iou = (intersection / (union + 1e-6)).mean().item()
+    for i in range(pred.size(1)):  # For each point channel
+        pred_ch = pred[:, i]
+        target_ch = target[:, i]
+        
+        # Binarize
+        pred_bin = (pred_ch > 0.5).float()
+        target_bin = (target_ch > 0.5).float()
+        
+        # IoU calculation
+        intersection = (pred_bin * target_bin).sum(dim=(-2, -1))
+        union = ((pred_bin + target_bin) > 0).float().sum(dim=(-2, -1))
+        iou = (intersection / (union + 1e-6)).mean().item()
+        total_iou += iou
+        
+        # Center error calculation
+        errors = []
+        for j in range(pred_ch.shape[0]):
+            pred_center = np.unravel_index(pred_ch[j].argmax().item(), pred_ch.shape[-2:])
+            target_center = np.unravel_index(target_ch[j].argmax().item(), target_ch.shape[-2:])
+            error = np.sqrt((pred_center[0]-target_center[0])**2 + 
+                          (pred_center[1]-target_center[1])**2)
+            errors.append(error)
+        
+        total_error += np.mean(errors) if errors else 0
+        num_points += 1 if errors else 0
     
-    # Center error calculation
-    errors = []
-    for i in range(pred.shape[0]):
-        pred_center = np.unravel_index(pred[i].argmax().item(), pred.shape[-2:])
-        target_center = np.unravel_index(target[i].argmax().item(), target.shape[-2:])
-        error = np.sqrt((pred_center[0]-target_center[0])**2 + 
-                      (pred_center[1]-target_center[1])**2)
-        errors.append(error)
-    avg_error = np.mean(errors)
+    avg_iou = total_iou / num_points if num_points > 0 else 0
+    avg_error = total_error / num_points if num_points > 0 else 0
     
-    return iou, avg_error
-
+    return avg_iou, avg_error
 
 def validate(model, dataloader, device, writer=None, epoch=None):
     """Enhanced validation with robust dimension handling"""
@@ -91,11 +138,19 @@ def validate(model, dataloader, device, writer=None, epoch=None):
     total_loss = 0.0
     total_iou = 0.0
     total_error = 0.0
+    num_batches = 0
     
     with torch.no_grad():
-        for images, heatmaps in dataloader:
-            images = images.to(device)
-            heatmaps = heatmaps.to(device).float()
+        for images, points in dataloader:
+            # Ensure proper tensor format (NCHW)
+            images = images.permute(0, 3, 1, 2).to(device)  # Convert from NHWC to NCHW
+            
+            # Generate heatmaps from points
+            heatmaps = generate_heatmaps(
+                points, 
+                (images.size(-2), images.size(-1)),
+                sigma=3.0
+            ).to(device)
             
             # Forward pass
             pred_heatmaps = model(images)
@@ -104,18 +159,16 @@ def validate(model, dataloader, device, writer=None, epoch=None):
             loss = heatmap_loss(pred_heatmaps, heatmaps)
             total_loss += loss.item()
             
-            # Calculate metrics with proper shape handling
-            pred = pred_heatmaps.squeeze(1) if len(pred_heatmaps.shape) == 4 else pred_heatmaps
-            target = heatmaps.squeeze(1) if len(heatmaps.shape) == 4 else heatmaps
-            
-            iou, error = calculate_metrics(pred, target)
+            # Calculate metrics
+            iou, error = calculate_metrics(pred_heatmaps, heatmaps)
             total_iou += iou
             total_error += error
+            num_batches += 1
     
     # Compute averages
-    avg_loss = total_loss / len(dataloader)
-    avg_iou = total_iou / len(dataloader)
-    avg_error = total_error / len(dataloader)
+    avg_loss = total_loss / num_batches if num_batches > 0 else 0
+    avg_iou = total_iou / num_batches if num_batches > 0 else 0
+    avg_error = total_error / num_batches if num_batches > 0 else 0
     
     # Logging
     if writer is not None and epoch is not None:
@@ -124,7 +177,7 @@ def validate(model, dataloader, device, writer=None, epoch=None):
         writer.add_scalar('Metrics/Center_Error', avg_error, epoch)
     
     return avg_loss, avg_iou, avg_error
-    
+
 def train():
     # Load configuration
     config = load_config('configs/train_config.yaml')
@@ -137,7 +190,7 @@ def train():
     writer = SummaryWriter(f"logs/{timestamp}")
     
     # Initialize model
-    model = HeatmapTracker().to(device)
+    model = HeatmapTracker(max_targets=2).to(device)  # Modified for 2 targets
     optimizer = torch.optim.AdamW(
         model.parameters(),
         lr=config['model']['learning_rate'],
@@ -174,17 +227,14 @@ def train():
         num_workers=num_workers,
         pin_memory=True
     )
+    
+    # Data verification
     sample = next(iter(train_loader))
-    img, heatmap = sample
+    img, points = sample
     print("\nData Verification:")
-    print(f"Heatmap max: {heatmap.max().item():.3f}, min: {heatmap.min().item():.3f}")
-    print(f"Target center: {np.unravel_index(heatmap[0].argmax(), heatmap.shape[-2:])}")
- 
-    # Visual inspection
-    import matplotlib.pyplot as plt
-    plt.imshow(heatmap[0].numpy(), cmap='hot')
-    plt.title("Sample Heatmap")
-    plt.show()
+    print(f"Image shape: {img.shape}")
+    print(f"Points shape: {points.shape}")
+    print(f"Sample point coordinates: {points[0]}")
     
     # Training loop
     best_loss = float('inf')
@@ -195,8 +245,16 @@ def train():
         model.train()
         epoch_loss = 0.0
         
-        for batch_idx, (images, heatmaps) in enumerate(train_loader):
-            images, heatmaps = images.to(device), heatmaps.to(device).float()
+        for batch_idx, (images, points) in enumerate(train_loader):
+            # Ensure proper tensor format (NCHW)
+            images = images.permute(0, 3, 1, 2).to(device)  # Convert from NHWC to NCHW
+            
+            # Generate heatmaps from points
+            heatmaps = generate_heatmaps(
+                points,
+                (images.size(-2), images.size(-1)),
+                sigma=config['model']['heatmap_sigma']
+            ).to(device)
             
             optimizer.zero_grad()
             pred_heatmaps = model(images)
@@ -205,15 +263,8 @@ def train():
             if batch_idx == 0 and epoch == 0:
                 print(f"\nInitial Batch Debug:")
                 print(f"Input shape: {images.shape}")
-                print(f"Target range: {heatmaps.min().item():.3f}-{heatmaps.max().item():.3f}")
-                print(f"Pred range: {pred_heatmaps.min().item():.3f}-{pred_heatmaps.max().item():.3f}")
-                
-                # Visualize first sample
-                with torch.no_grad():
-                    sample_img = images[0].cpu().permute(1, 2, 0).numpy()
-                    sample_heatmap = heatmaps[0].cpu().numpy()
-                    pred_heatmap = pred_heatmaps[0].cpu().numpy()
-                    plot_heatmap_comparison(sample_img, pred_heatmap, sample_heatmap)
+                print(f"Heatmap shape: {heatmaps.shape}")
+                print(f"Prediction shape: {pred_heatmaps.shape}")
             
             loss = heatmap_loss(pred_heatmaps, heatmaps)
             loss.backward()
@@ -227,14 +278,6 @@ def train():
             # Log batch progress
             if batch_idx % 20 == 0:
                 print(f"Epoch {epoch} | Batch {batch_idx}/{len(train_loader)} | Loss: {loss.item():.6f}")
-                
-                # Visualize sample prediction periodically
-                if batch_idx == 0:
-                    with torch.no_grad():
-                        sample_img = images[0].cpu().permute(1, 2, 0).numpy()
-                        sample_heatmap = heatmaps[0].cpu().numpy()
-                        pred_heatmap = pred_heatmaps[0].cpu().numpy()
-                        plot_heatmap_comparison(sample_img, pred_heatmap, sample_heatmap)
         
         # Validation
         val_loss, val_iou, val_error = validate(model, val_loader, device, writer, epoch)

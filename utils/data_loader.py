@@ -1,115 +1,77 @@
 import os
 import cv2
-import torch
 import numpy as np
 import pandas as pd
-import random
+import torch
 from torch.utils.data import Dataset
-
-class Augmentation:
-    def __call__(self, image, heatmap):
-        # Random affine transforms
-        if random.random() > 0.5:
-            angle = random.uniform(-15, 15)
-            scale = random.uniform(0.9, 1.1)
-            tx = random.uniform(-0.1, 0.1) * image.shape[1]
-            ty = random.uniform(-0.1, 0.1) * image.shape[0]
-            
-            M = cv2.getRotationMatrix2D((image.shape[1]/2, image.shape[0]/2), angle, scale)
-            M[:,2] += [tx, ty]
-            
-            image = cv2.warpAffine(image, M, (image.shape[1], image.shape[0]))
-            heatmap = cv2.warpAffine(heatmap, M, (heatmap.shape[1], heatmap.shape[0]))
-        
-        # Add Gaussian noise
-        if random.random() > 0.5:
-            noise = np.random.normal(0, 0.03, image.shape).astype(np.float32)
-            image = np.clip(image + noise, 0, 1)
-            
-        # Motion blur
-        if random.random() > 0.7:
-            size = random.randint(3, 7)
-            kernel = np.zeros((size, size))
-            kernel[int((size-1)/2), :] = np.ones(size)
-            kernel = kernel / size
-            image = cv2.filter2D(image, -1, kernel)
-            
-        return image, heatmap
+import albumentations as A
+from albumentations.pytorch import ToTensorV2
 
 class TargetDataset(Dataset):
     def __init__(self, image_dir, transform=None):
         self.image_dir = image_dir
-        self.transform = transform if transform else Augmentation()  # Default augmentation
-        self.annotations = self._load_annotations()
+        self.transform = transform
         
-        if self.annotations is None:
+        # Load annotations
+        annot_path = os.path.join(image_dir, 'annotations/annotations.csv')
+        self.annotations = pd.read_csv(annot_path)
+        
+        # Verify required columns
+        required_cols = ['image_path', 'x0', 'y0', 'x1', 'y1']
+        if not all(col in self.annotations.columns for col in required_cols):
             raise ValueError(
-                f"Annotations not loaded. Check:\n"
-                f"1. File exists at: {os.path.join(image_dir, 'annotations/annotations.csv')}\n"
-                f"2. CSV has columns: 'image_path', 'x', 'y'\n"
-                f"3. First image path exists at: {os.path.join(image_dir, 'images', self._get_sample_image_path())}"
+                f"CSV missing required columns. Needs: {required_cols}\n"
+                f"Found: {self.annotations.columns.tolist()}"
             )
-
+        
+        # Verify first image exists
+        first_img = os.path.join(image_dir, 'images', self.annotations.iloc[0]['image_path'])
+        if not os.path.exists(first_img):
+            raise ValueError(f"First image path does not exist: {first_img}")
 
     def __len__(self):
         return len(self.annotations)
 
     def __getitem__(self, idx):
-        row = self.annotations.iloc[idx]
-        img_path = os.path.join(self.image_dir, 'images', row['image_path'])
-        
+        img_path = os.path.join(self.image_dir, 'images', self.annotations.iloc[idx]['image_path'])
         image = cv2.imread(img_path)
-        if image is None:
-            raise FileNotFoundError(f"Image not found at {img_path}")
+        image = cv2.cvtColor(image, cv2.COLOR_BGR2RGB)
         
-        # Convert BGR to RGB and normalize
-        image = cv2.cvtColor(image, cv2.COLOR_BGR2RGB) / 255.0
-        target = (row['x'], row['y'])
-        heatmap = self._create_heatmap(image.shape[:2], target)
+        # Get both points
+        points = np.array([
+            [self.annotations.iloc[idx]['x0'], self.annotations.iloc[idx]['y0']],  # point0
+            [self.annotations.iloc[idx]['x1'], self.annotations.iloc[idx]['y1']]   # point1
+        ], dtype=np.float32)
         
         if self.transform:
-            image, heatmap = self.transform(image, heatmap)
+            if isinstance(self.transform, A.Compose):
+                # Albumentations style transform
+                transformed = self.transform(image=image, keypoints=points)
+                image = transformed['image']
+                points = np.array(transformed['keypoints'])
+            else:
+                # PyTorch style transform
+                image, points = self.transform(image, points)
             
-        # Convert to channels-first format
-        image = np.moveaxis(image, -1, 0)
-        return torch.from_numpy(image).float(), torch.from_numpy(heatmap).float()
+        return image, points
 
-    def _create_heatmap(self, img_shape, center, sigma=3):
-        h, w = img_shape
-        y, x = np.indices((h, w))
-        
-        # Create 2D Gaussian
-        heatmap = np.exp(-((x - center[0])**2 + (y - center[1])**2) / (2 * sigma**2))
-        
-        # Normalize to [0, 1] with peak at center
-        heatmap = heatmap / heatmap.max()
-        
-        # Add slight noise to prevent overconfidence
-        heatmap += np.random.normal(0, 0.01, (h, w))
-        return np.clip(heatmap, 0, 1)
-
-    def _load_annotations(self):
-        try:
-            csv_path = os.path.join(self.image_dir, 'annotations/annotations.csv')
-            df = pd.read_csv(csv_path)
-            
-            # Validate required columns
-            if not all(col in df.columns for col in ['image_path', 'x', 'y']):
-                print("CSV missing required columns. Needs: 'image_path', 'x', 'y'")
-                return None
-                
-            return df
-        except Exception as e:
-            print(f"Error loading annotations: {str(e)}")
-            return None
-
-    def _get_sample_image_path(self):
-        """Helper to get a sample image path for error messages"""
-        try:
-            csv_path = os.path.join(self.image_dir, 'annotations/annotations.csv')
-            if os.path.exists(csv_path):
-                df = pd.read_csv(csv_path)
-                return df.iloc[0]['image_path'] if len(df) > 0 else "no_images_in_csv"
-        except:
-            return "cannot_access_csv"
-        return "unknown_path"
+class Augmentation:
+    """Albumentations-based augmentation pipeline"""
+    def __init__(self):
+        self.transform = A.Compose([
+            A.HorizontalFlip(p=0.5),
+            A.Rotate(limit=15, p=0.5),
+            A.RandomBrightnessContrast(p=0.2),
+            A.GaussianBlur(blur_limit=(3, 7), p=0.3),
+            A.Normalize(
+                mean=[0.485, 0.456, 0.406],
+                std=[0.229, 0.224, 0.225]
+            ),
+            ToTensorV2()
+        ], keypoint_params=A.KeypointParams(format='xy'))
+    
+    def __call__(self, image, points):
+        # Convert points to list of tuples for albumentations
+        points_list = [tuple(p) for p in points]
+        transformed = self.transform(image=image, keypoints=points_list)
+        return transformed['image'], np.array(transformed['keypoints'])

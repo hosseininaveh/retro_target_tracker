@@ -5,15 +5,16 @@ import os
 from tqdm import tqdm
 from skimage.draw import disk
 from sklearn.model_selection import train_test_split
+import matplotlib.pyplot as plt
 
 # Configuration
-DATASET_ROOT = "enhanced_dataset"
+DATASET_ROOT = "data"
 IMAGE_PAIRS = [
     {
         "left": "./left_frame.jpg",
         "right": "./right_frame.jpg",
         "left_points": {
-            "point0": (272, 396),
+            "point0": (272, 396),  # (row, col)
             "point1": (269, 412)
         },
         "right_points": {
@@ -142,8 +143,8 @@ def generate_variations(clean_img, target_templates, target_masks, original_poin
         variations.append({
             "image": new_img,
             "points": {
-                "point0": sorted_points[0][1],
-                "point1": sorted_points[1][1]
+                "point0": sorted_points[0][1],  # (row, col)
+                "point1": sorted_points[1][1]   # (row, col)
             },
             "original_image": os.path.basename(clean_img.filename) if hasattr(clean_img, 'filename') else "generated"
         })
@@ -151,6 +152,7 @@ def generate_variations(clean_img, target_templates, target_masks, original_poin
     return variations
 
 def generate_dataset():
+    """Main function to generate the complete dataset"""
     # Create directory structure
     os.makedirs(f"{DATASET_ROOT}/train/images", exist_ok=True)
     os.makedirs(f"{DATASET_ROOT}/train/annotations", exist_ok=True)
@@ -164,7 +166,8 @@ def generate_dataset():
     # Calculate variations per image pair
     variations_per_pair = TOTAL_VARIATIONS // len(IMAGE_PAIRS)
     
-    for pair in IMAGE_PAIRS:
+    for pair in tqdm(IMAGE_PAIRS, desc="Processing image pairs"):
+        # Load images
         left_img = cv2.imread(pair["left"])
         right_img = cv2.imread(pair["right"])
         
@@ -203,37 +206,73 @@ def generate_dataset():
         all_data.extend(left_variations)
         all_data.extend(right_variations)
     
-    # Convert to DataFrame
-    df = pd.DataFrame([{
-        "image_path": f"image_{i:05d}.jpg",
-        "point0_row": var["points"]["point0"][0],
-        "point0_col": var["points"]["point0"][1],
-        "point1_row": var["points"]["point1"][0],
-        "point1_col": var["points"]["point1"][1],
-        "original_image": var["original_image"]
-    } for i, var in enumerate(all_data)])
+    # Create DataFrame with proper two-point annotation format
+    annotations = []
+    for i, var in enumerate(all_data):
+        annotations.append({
+            "image_path": f"image_{i:05d}.jpg",
+            "x0": var["points"]["point0"][1],  # column (x) for point0
+            "y0": var["points"]["point0"][0],  # row (y) for point0
+            "x1": var["points"]["point1"][1],  # column (x) for point1
+            "y1": var["points"]["point1"][0],  # row (y) for point1
+        })
+    df = pd.DataFrame(annotations)
     
-    # Split dataset
-    train_df, test_df = train_test_split(df, test_size=TEST_RATIO)
-    train_df, val_df = train_test_split(train_df, test_size=VAL_RATIO/(1-TEST_RATIO))
+    # Split dataset (stratify by original image if needed)
+    train_df, test_df = train_test_split(df, test_size=TEST_RATIO, random_state=42)
+    train_df, val_df = train_test_split(train_df, test_size=VAL_RATIO/(1-TEST_RATIO), random_state=42)
     
     # Save images and annotations
     def save_subset(subset_df, subset_name):
         os.makedirs(f"{DATASET_ROOT}/{subset_name}/images", exist_ok=True)
         for idx, row in subset_df.iterrows():
             var = all_data[idx]
-            cv2.imwrite(f"{DATASET_ROOT}/{subset_name}/images/{row['image_path']}", var["image"])
+            cv2.imwrite(
+                f"{DATASET_ROOT}/{subset_name}/images/{row['image_path']}", 
+                var["image"]
+            )
         subset_df.to_csv(f"{DATASET_ROOT}/{subset_name}/annotations/annotations.csv", index=False)
     
     save_subset(train_df, "train")
     save_subset(val_df, "val")
     save_subset(test_df, "test")
     
-    print(f"Dataset generated with {len(all_data)} images")
+    # Verify the first few samples
+    print("\nVerifying dataset structure...")
+    verify_dataset()
+    
+    print(f"\nDataset generation complete!")
+    print(f"Total images: {len(all_data)}")
     print(f"Train: {len(train_df)} images")
     print(f"Validation: {len(val_df)} images")
     print(f"Test: {len(test_df)} images")
     print(f"Saved to: {os.path.abspath(DATASET_ROOT)}")
+
+def verify_dataset():
+    """Verify the generated dataset structure and annotations"""
+    # Check train set
+    train_annot = pd.read_csv(f"{DATASET_ROOT}/train/annotations/annotations.csv")
+    print("\nTrain set:")
+    print(f"Number of samples: {len(train_annot)}")
+    print("Columns:", train_annot.columns.tolist())
+    print("First entry:\n", train_annot.iloc[0])
+    
+    # Visualize a sample
+    sample_img_path = f"{DATASET_ROOT}/train/images/{train_annot.iloc[0]['image_path']}"
+    sample_img = cv2.imread(sample_img_path)
+    sample_img = cv2.cvtColor(sample_img, cv2.COLOR_BGR2RGB)
+    
+    points = np.array([
+        [train_annot.iloc[0]['x0'], train_annot.iloc[0]['y0']],
+        [train_annot.iloc[0]['x1'], train_annot.iloc[0]['y1']]
+    ])
+    
+    plt.figure(figsize=(8, 6))
+    plt.imshow(sample_img)
+    plt.scatter(points[:, 0], points[:, 1], c=['green', 'blue'], s=50)
+    plt.title("Sample Training Image\n(Green: Point0, Blue: Point1)")
+    plt.axis('off')
+    plt.show()
 
 if __name__ == "__main__":
     generate_dataset()
