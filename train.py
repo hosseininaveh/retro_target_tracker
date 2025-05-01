@@ -17,7 +17,19 @@ import matplotlib.pyplot as plt
 import warnings
 warnings.filterwarnings("ignore", category=UserWarning)
 os.environ['TF_CPP_MIN_LOG_LEVEL'] = '3'  # Suppress TensorFlow logging
-
+def find_subpixel_center(heatmap):
+    """Find subpixel-accurate center coordinates from heatmap"""
+    # Get pixel-level max location
+    y_max, x_max = np.unravel_index(heatmap.argmax(), heatmap.shape)
+    
+    # Quadratic interpolation for subpixel accuracy
+    if 0 < x_max < heatmap.shape[1]-1 and 0 < y_max < heatmap.shape[0]-1:
+        dx = 0.5 * (heatmap[y_max, x_max+1] - heatmap[y_max, x_max-1])
+        dy = 0.5 * (heatmap[y_max+1, x_max] - heatmap[y_max-1, x_max])
+        x_max += dx
+        y_max += dy
+    
+    return torch.tensor([x_max, y_max], device=heatmap.device)
 def load_config(config_path):
     """Load and validate configuration"""
     with open(config_path) as f:
@@ -94,8 +106,13 @@ def heatmap_loss(pred, target):
     return total_loss / pred.size(1)  # Average over channels
 
 def calculate_metrics(pred, target):
+    """Compute evaluation metrics with robust error handling"""
+    # Ensure we're working with float tensors
+    pred = pred.float()
+    target = target.float()
+    
     # Use lower threshold for binary conversion
-    pred_bin = (pred > 0.1).float()  # Changed from 0.5
+    pred_bin = (pred > 0.1).float()
     target_bin = (target > 0.1).float()
     
     # Only calculate for heatmaps with sufficient activation
@@ -103,15 +120,25 @@ def calculate_metrics(pred, target):
     valid = target_bin.sum(dim=(-2,-1)) > min_pixels
     
     if valid.any():
-        intersection = (pred_bin[valid] * target_bin[valid]).sum()
-        union = (pred_bin[valid] + target_bin[valid]).clamp(0,1).sum()
-        iou = (intersection / (union + 1e-6)).item()
+        # Calculate IoU
+        intersection = (pred_bin[valid] * target_bin[valid]).sum(dim=(-2,-1))
+        union = (pred_bin[valid] + target_bin[valid]).clamp(0,1).sum(dim=(-2,-1))
+        iou = (intersection / (union + 1e-6)).mean().item()
         
-        # Calculate center error only for valid predictions
-        pred_centers = [find_subpixel_center(p) for p in pred[valid]]
-        target_centers = [find_subpixel_center(t) for t in target[valid]]
-        errors = [torch.norm(p-t) for p,t in zip(pred_centers, target_centers)]
-        avg_error = sum(errors)/len(errors) if errors else 0
+        # Calculate center error
+        pred_centers = []
+        target_centers = []
+        for i in range(valid.sum()):
+            for c in range(pred.shape[1]):  # For each channel
+                if target_bin[valid][i,c].sum() > 0:
+                    pred_centers.append(find_subpixel_center(pred[valid][i,c]))
+                    target_centers.append(find_subpixel_center(target[valid][i,c]))
+        
+        if pred_centers:
+            errors = [torch.norm(p-t) for p,t in zip(pred_centers, target_centers)]
+            avg_error = sum(errors)/len(errors)
+        else:
+            avg_error = 0.0
     else:
         iou = 0.0
         avg_error = 0.0
@@ -139,7 +166,17 @@ def validate(model, dataloader, device, writer=None, epoch=None):
             
             # Forward pass
             pred_heatmaps = model(images)
-            
+            if num_batches == 0 and epoch % 2 == 0:
+                idx = 0  # First sample
+                img = images[idx].cpu().permute(1,2,0).numpy()
+                pred_hm = pred_heatmaps[idx,0].cpu().numpy()
+                true_hm = heatmaps[idx,0].cpu().numpy()
+                
+                plt.figure(figsize=(15,5))
+                plt.subplot(131); plt.imshow(img); plt.title("Image")
+                plt.subplot(132); plt.imshow(pred_hm); plt.title("Predicted Heatmap")
+                plt.subplot(133); plt.imshow(true_hm); plt.title("True Heatmap")
+                plt.show()
             # Ensure shapes match
             if pred_heatmaps.shape[-2:] != heatmaps.shape[-2:]:
                 heatmaps = F.interpolate(heatmaps, size=pred_heatmaps.shape[-2:], mode='bilinear')
