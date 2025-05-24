@@ -23,6 +23,18 @@ IMAGE_PAIRS = [
             "point1": (270, 230)
         }
     },
+        {
+        "left": "./left_frame001.jpg",
+        "right": "./right_frame001.jpg",
+        "left_points": {
+            "point0": (240, 281),  # (row, col)
+            "point1": (236, 488)
+        },
+        "right_points": {
+            "point0": (239, 118),
+            "point1": (233, 286)
+        }
+    },
     {
         "left": "./c_left.jpg",
         "right": "./c_right.jpg",
@@ -84,7 +96,7 @@ VAL_RATIO = 0.15
 # YOLO class mapping - point0 is class 0, point1 is class 1
 CLASS_MAP = {"point0": 0, "point1": 1}
 
-def extract_target_template(img, center, window_size=30):
+def extract_target_template(img, center, window_size=15):
     """Extract target template with precise masking"""
     h, w = img.shape[:2]
     y, x = center
