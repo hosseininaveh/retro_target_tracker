@@ -27,6 +27,18 @@ IMAGE_PAIRS = [
         "left": "./left_frame001.jpg",
         "right": "./right_frame001.jpg",
         "left_points": {
+            "point0": (240, 298),  # (row, col)
+            "point1": (234, 502)
+        },
+        "right_points": {
+            "point0": (240, 130),
+            "point1": (232, 305)
+        }
+    },
+            {
+        "left": "./left_frame011.jpg",
+        "right": "./right_frame011.jpg",
+        "left_points": {
             "point0": (240, 281),  # (row, col)
             "point1": (236, 488)
         },
