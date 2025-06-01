@@ -11,19 +11,8 @@ import shutil
 DATASET_ROOT = "yolo_dataset"
 IMAGE_PAIRS = [
 '''
- Original image pairs
-    {
-        "left": "./left_frame.jpg",
-        "right": "./right_frame.jpg",
-        "left_points": {
-            "point0": (272, 396),  # (row, col)
-            "point1": (269, 412)
-        },
-        "right_points": {
-            "point0": (270, 214),
-            "point1": (270, 230)
-        }
-    },
+ #Original image pairs
+
         {
         "left": "./left_frame_001.jpg",
         "right": "./right_frame_001.jpg",
@@ -84,44 +73,7 @@ IMAGE_PAIRS = [
             "point1": (233, 286)
         }
     },
-    '''
-    {
-        "left": "./c_left.jpg",
-        "right": "./c_right.jpg",
-        "left_points": {
-            "point0": (306, 365),
-            "point1": (302, 384)
-        },
-        "right_points": {
-            "point0": (302, 162),
-            "point1": (300, 178)
-        }
-    },
-        {
-        "left": "./left_frame_2562.jpg",
-        "right": "./right_frame_2562.jpg",
-        "left_points": {
-            "point0": (272, 396),
-            "point1": (268, 438)
-        },
-        "right_points": {
-            "point0": (271, 215),
-            "point1": (267, 259)
-        }
-    },
-        {
-        "left": "./left_frame_3146.jpg",
-        "right": "./right_frame_3146.jpg",
-        "left_points": {
-            "point0": (272, 396),
-            "point1": (268, 428)
-        },
-        "right_points": {
-            "point0": (271, 215),
-            "point1": (268, 248)
-        }
-    },
-    '''
+    
     # New image pairs
     {
         "left": "./p_left_100.jpg",
@@ -159,7 +111,69 @@ IMAGE_PAIRS = [
             "point1": (163, 374)
         }
     }
+    
+    {
+        "left": "./c_left.jpg",
+        "right": "./c_right.jpg",
+        "left_points": {
+            "point0": (306, 365),
+            "point1": (302, 384)
+        },
+        "right_points": {
+            "point0": (302, 162),
+            "point1": (300, 178)
+        }
+    },
     '''
+        {
+        "left": "./left_frame.jpg",
+        "right": "./right_frame.jpg",
+        "left_points": {
+            "point0": (272, 396),  # (row, col)
+            "point1": (269, 412)
+        },
+        "right_points": {
+            "point0": (271, 214),
+            "point1": (270, 230)
+        }
+    },
+        {
+        "left": "./left_frame_2562.jpg",
+        "right": "./right_frame_2562.jpg",
+        "left_points": {
+            "point0": (272, 396),
+            "point1": (268, 438)
+        },
+        "right_points": {
+            "point0": (271, 214),
+            "point1": (267, 259)
+        }
+    },
+        {
+        "left": "./left_frame_3146.jpg",
+        "right": "./right_frame_3146.jpg",
+        "left_points": {
+            "point0": (272, 396),
+            "point1": (268, 428)
+        },
+        "right_points": {
+            "point0": (271, 214),
+            "point1": (268, 248)
+        }
+    },
+            {
+        "left": "./left_frame_737.jpg",
+        "right": "./right_frame_737.jpg",
+        "left_points": {
+            "point0": (272, 396),
+            "point1": (270, 418)
+        },
+        "right_points": {
+            "point0": (271, 214),
+            "point1": (269, 237)
+        }
+    },
+    
 ]
 TOTAL_VARIATIONS = 5000  # Total across all image pairs
 TARGET_WINDOW_SIZE = 15  # This will be our bounding box size
