@@ -172,15 +172,17 @@ TOTAL_VARIATIONS = 5000  # Total across all image pairs
 TARGET_WINDOW_SIZE = 15  # Size of marker region for template extraction
 MARGIN = 50
 RANDOM_OFFSET_RANGE = 30
-OUTPUT_SIZE = (640, 480)  # SuperPoint input size (match your stereo_3d_tracker2)
+OUTPUT_SIZE = (640, 480)  # SuperPoint input size
 TEST_RATIO = 0.15
 VAL_RATIO = 0.15
 HEATMAP_SIZE = (30, 40)  # Matches out_det shape [2, 65, 30, 40]
 HEATMAP_SIGMA = 2.0  # For Gaussian heatmap
 
 def extract_target_template(img, center, window_size=15):
-    """Extract target template with precise masking"""
-    h, w = img.shape[:2]
+    """Extract target template with precise masking, ensuring grayscale"""
+    if len(img.shape) == 3:
+        img = cv2.cvtColor(img, cv2.COLOR_BGR2GRAY)
+    h, w = img.shape
     y, x = center
     
     y1 = max(0, int(y) - window_size//2)
@@ -193,28 +195,36 @@ def extract_target_template(img, center, window_size=15):
     cv2.circle(mask, (cx, cy), window_size//2, 255, -1)
     
     target_window = img[y1:y2, x1:x2].copy()
+    print(f"extract_target_template: target_window shape={target_window.shape}, mask shape={mask.shape}")
     return target_window, mask
 
 def remove_targets(img, target_positions, window_size=15):
-    """Remove targets using precise inpainting"""
+    """Remove targets using precise inpainting, ensuring grayscale"""
+    if len(img.shape) == 3:
+        img = cv2.cvtColor(img, cv2.COLOR_BGR2GRAY)
     clean_img = img.copy()
-    mask = np.zeros(img.shape[:2], dtype=np.uint8)
+    mask = np.zeros(img.shape, dtype=np.uint8)
     
     for center in target_positions.values():
         y, x = center
         radius = window_size//2 + 2
-        rr, cc = disk((y, x), radius, shape=img.shape[:2])
+        rr, cc = disk((y, x), radius, shape=img.shape)
         mask[rr, cc] = 255
     
     kernel = np.ones((5,5), np.uint8)
     mask = cv2.dilate(mask, kernel)
     clean_img = cv2.inpaint(clean_img, mask, inpaintRadius=5, flags=cv2.INPAINT_TELEA)
+    print(f"remove_targets: clean_img shape={clean_img.shape}")
     return clean_img
 
 def place_target(img, target_template, target_mask, center):
-    """Place target at new position with proper blending"""
-    h, w = img.shape[:2]
-    temp_h, temp_w = target_template.shape[:2]
+    """Place target at new position with proper blending, ensuring grayscale"""
+    if len(img.shape) == 3:
+        img = cv2.cvtColor(img, cv2.COLOR_BGR2GRAY)
+    if len(target_template.shape) == 3:
+        target_template = cv2.cvtColor(target_template, cv2.COLOR_BGR2GRAY)
+    h, w = img.shape
+    temp_h, temp_w = target_template.shape
     
     y = int(round(center[0]))
     x = int(round(center[1]))
@@ -234,7 +244,8 @@ def place_target(img, target_template, target_mask, center):
         tmask = tmask[ty1:ty2, tx1:tx2]
     
     roi = img[y1:y2, x1:x2]
-    mask = tmask[..., None].astype(float)/255.0
+    mask = tmask.astype(float)/255.0
+    print(f"place_target: roi shape={roi.shape}, template shape={template.shape}, mask shape={mask.shape}")
     img[y1:y2, x1:x2] = (roi * (1 - mask) + template * mask).astype(np.uint8)
     return img
 
@@ -245,15 +256,10 @@ def create_heatmap(points, img_width, img_height, heatmap_size=(30, 40), sigma=2
     scale_y = heatmap_size[0] / img_height  # 30 / 480
     
     for point_name, (y, x) in points.items():
-        # Map pixel coordinates to heatmap grid
         grid_x = min(int(x * scale_x), heatmap_size[1] - 1)
         grid_y = min(int(y * scale_y), heatmap_size[0] - 1)
-        
-        # Create a Gaussian blob
-        heatmap[0, grid_y, grid_x] = 1.0  # Single point activation
-        # Apply Gaussian blur
+        heatmap[0, grid_y, grid_x] = 1.0
         heatmap[0] = gaussian_filter(heatmap[0], sigma=sigma)
-        # Normalize to [0, 1]
         heatmap[0] = heatmap[0] / (heatmap[0].max() + 1e-6)
     
     return heatmap
@@ -261,7 +267,7 @@ def create_heatmap(points, img_width, img_height, heatmap_size=(30, 40), sigma=2
 def generate_variations(clean_img, target_templates, target_masks, original_points, num_variations):
     """Generate image variations with targets in new positions"""
     variations = []
-    h, w = clean_img.shape[:2]
+    h, w = clean_img.shape
     
     for i in range(num_variations):
         new_img = clean_img.copy()
@@ -296,7 +302,6 @@ def generate_variations(clean_img, target_templates, target_masks, original_poin
                 for name, (row, col) in new_points.items()
             }
         
-        # Generate heatmap
         heatmap = create_heatmap(new_points, OUTPUT_SIZE[0], OUTPUT_SIZE[1], HEATMAP_SIZE)
         
         variations.append({
@@ -310,12 +315,10 @@ def generate_variations(clean_img, target_templates, target_masks, original_poin
 
 def generate_superpoint_dataset():
     """Main function to generate the SuperPoint formatted dataset"""
-    # Create directory structure
     for split in ['train', 'val', 'test']:
         os.makedirs(f"{DATASET_ROOT}/images/{split}", exist_ok=True)
         os.makedirs(f"{DATASET_ROOT}/annotations/{split}", exist_ok=True)
     
-    # Create dataset.yaml file
     yaml_content = f"""path: {os.path.abspath(DATASET_ROOT)}
 train: images/train
 val: images/val
@@ -325,12 +328,9 @@ test: images/test
         f.write(yaml_content)
     
     all_data = []
-    
-    # Calculate variations per image pair
     variations_per_pair = TOTAL_VARIATIONS // len(IMAGE_PAIRS)
     
     for pair in tqdm(IMAGE_PAIRS, desc="Processing image pairs"):
-        # Load images
         left_img = cv2.imread(pair["left"])
         right_img = cv2.imread(pair["right"])
         
@@ -338,11 +338,9 @@ test: images/test
             print(f"Warning: Could not load image pair: {pair['left']} and {pair['right']}")
             continue
         
-        # Convert to grayscale
         left_img = cv2.cvtColor(left_img, cv2.COLOR_BGR2GRAY)
         right_img = cv2.cvtColor(right_img, cv2.COLOR_BGR2GRAY)
         
-        # Process left image
         left_templates = {}
         left_masks = {}
         for point_name, point_pos in pair["left_points"].items():
@@ -356,7 +354,6 @@ test: images/test
             pair["left_points"], variations_per_pair // 2
         )
         
-        # Process right image
         right_templates = {}
         right_masks = {}
         for point_name, point_pos in pair["right_points"].items():
@@ -370,11 +367,9 @@ test: images/test
             pair["right_points"], variations_per_pair // 2
         )
         
-        # Combine and add to dataset
         all_data.extend(left_variations)
         all_data.extend(right_variations)
     
-    # Create list of all samples with their annotations
     samples = []
     for i, var in enumerate(all_data):
         img_width = var["image"].shape[1]
@@ -388,21 +383,16 @@ test: images/test
             "height": img_height
         })
     
-    # Split dataset
     df = pd.DataFrame(samples)
     train_df, test_df = train_test_split(df, test_size=TEST_RATIO, random_state=42)
     train_df, val_df = train_test_split(train_df, test_size=VAL_RATIO/(1-TEST_RATIO), random_state=42)
     
-    # Save images, annotations, and heatmaps
     def save_subset(subset_df, subset_name):
         for idx, row in subset_df.iterrows():
             var = all_data[idx]
-            
-            # Save image
             img_path = f"{DATASET_ROOT}/images/{subset_name}/{row['image_id']}"
             cv2.imwrite(img_path, var["image"])
             
-            # Save annotation (keypoint coordinates)
             annotation = ""
             for point_name, (y, x) in var["points"].items():
                 annotation += f"{point_name} {x:.6f} {y:.6f}\n"
@@ -410,7 +400,6 @@ test: images/test
             with open(txt_path, "w") as f:
                 f.write(annotation)
             
-            # Save heatmap
             heatmap_path = f"{DATASET_ROOT}/annotations/{subset_name}/{os.path.splitext(row['image_id'])[0]}.npy"
             np.save(heatmap_path, var["heatmap"])
     
@@ -427,7 +416,6 @@ test: images/test
     print(f"Dataset config file: {os.path.abspath(DATASET_ROOT)}/dataset.yaml")
 
 if __name__ == "__main__":
-    # Clear existing dataset if it exists
     if os.path.exists(DATASET_ROOT):
         shutil.rmtree(DATASET_ROOT)
     
