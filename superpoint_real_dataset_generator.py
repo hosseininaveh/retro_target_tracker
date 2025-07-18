@@ -9,7 +9,7 @@ import shutil
 from scipy.ndimage import gaussian_filter
 
 # Configuration
-DATASET_ROOT = "superpoint_dataset"
+DATASET_ROOT = "/home/mehdi/test_concrete_4/MarkerPose/dataset/superpoint_dataset"
 IMAGE_PAIRS = [
     {
         "left": "./left_frame_001.jpg",
@@ -175,7 +175,7 @@ RANDOM_OFFSET_RANGE = 30
 OUTPUT_SIZE = (640, 480)  # SuperPoint input size
 TEST_RATIO = 0.15
 VAL_RATIO = 0.15
-HEATMAP_SIZE = (30, 40)  # Matches out_det shape [2, 65, 30, 40]
+HEATMAP_SIZE = (60, 80)  # Matches out_det shape [65, 60, 80] for 640x480
 HEATMAP_SIGMA = 2.0  # For Gaussian heatmap
 
 def extract_target_template(img, center, window_size=15):
@@ -249,19 +249,21 @@ def place_target(img, target_template, target_mask, center):
     img[y1:y2, x1:x2] = (roi * (1 - mask) + template * mask).astype(np.uint8)
     return img
 
-def create_heatmap(points, img_width, img_height, heatmap_size=(30, 40), sigma=2.0):
+def create_heatmap(points, img_width, img_height, heatmap_size=(60, 80), sigma=2.0):
     """Create a heatmap for SuperPoint training"""
     heatmap = np.zeros((65, heatmap_size[0], heatmap_size[1]), dtype=np.float32)
-    scale_x = heatmap_size[1] / img_width  # 40 / 640
-    scale_y = heatmap_size[0] / img_height  # 30 / 480
+    scale_x = heatmap_size[1] / img_width  # 80 / 640
+    scale_y = heatmap_size[0] / img_height  # 60 / 480
     
-    for point_name, (y, x) in points.items():
+    for idx, (point_name, (y, x)) in enumerate(points.items()):
+        if idx >= 64: break
         grid_x = min(int(x * scale_x), heatmap_size[1] - 1)
         grid_y = min(int(y * scale_y), heatmap_size[0] - 1)
-        heatmap[0, grid_y, grid_x] = 1.0
-        heatmap[0] = gaussian_filter(heatmap[0], sigma=sigma)
-        heatmap[0] = heatmap[0] / (heatmap[0].max() + 1e-6)
+        heatmap[idx, grid_y, grid_x] = 1.0
+        heatmap[idx] = gaussian_filter(heatmap[idx], sigma=sigma)
+        heatmap[idx] = heatmap[idx] / (heatmap[idx].max() + 1e-6)
     
+    heatmap[64] = np.maximum(0, 1 - np.sum(heatmap[:64], axis=0))  # Background channel
     return heatmap
 
 def generate_variations(clean_img, target_templates, target_masks, original_points, num_variations):
@@ -401,7 +403,7 @@ test: images/test
                 f.write(annotation)
             
             heatmap_path = f"{DATASET_ROOT}/annotations/{subset_name}/{os.path.splitext(row['image_id'])[0]}.npy"
-            np.save(heatmap_path, var["heatmap"])
+            np.save(heatmap_path, var["heatmap"], allow_pickle=False)
     
     save_subset(train_df, "train")
     save_subset(val_df, "val")
