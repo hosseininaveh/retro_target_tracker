@@ -12,13 +12,161 @@ from scipy.ndimage import gaussian_filter
 DATASET_ROOT = "/home/mehdi/test_concrete_4/MarkerPose/dataset/ellipsegnet_dataset"
 IMAGE_PAIRS = [
     {
-        "left": "/home/mehdi/test_concrete_4/MarkerPose/images/image_00008.jpg",
+        "left": "./left_frame_001.jpg",
+        "right": "./right_frame_001.jpg",
         "left_points": {
-            "point0": (258.864132, 276.019174),  # (row, col)
-            "point1": (249.733477, 496.697453)
+            "point0": (240, 298),  # (row, col)
+            "point1": (234, 502)
+        },
+        "right_points": {
+            "point0": (240, 130),
+            "point1": (232, 305)
         }
     },
-    # Add more images with keypoints as needed
+    {
+        "left": "./left_frame_151.jpg",
+        "right": "./right_frame_151.jpg",
+        "left_points": {
+            "point0": (242, 333),  # (row, col)
+            "point1": (231, 526)
+        },
+        "right_points": {
+            "point0": (242, 154),
+            "point1": (228, 350)
+        }
+    },
+    {
+        "left": "./left_frame_137.jpg",
+        "right": "./right_frame_137.jpg",
+        "left_points": {
+            "point0": (243, 393),  # (row, col)
+            "point1": (225, 564)
+        },
+        "right_points": {
+            "point0": (242, 206),
+            "point1": (219, 411)
+        }
+    },
+    {
+        "left": "./left_frame_034.jpg",
+        "right": "./right_frame_034.jpg",
+        "left_points": {
+            "point0": (242, 383),  # (row, col)
+            "point1": (226, 550)
+        },
+        "right_points": {
+            "point0": (242, 191),
+            "point1": (222, 396)
+        }
+    },
+    {
+        "left": "./left_frame_011.jpg",
+        "right": "./right_frame_011.jpg",
+        "left_points": {
+            "point0": (240, 281),  # (row, col)
+            "point1": (236, 488)
+        },
+        "right_points": {
+            "point0": (239, 118),
+            "point1": (233, 286)
+        }
+    },
+    {
+        "left": "./p_left_100.jpg",
+        "right": "./p_right_100.jpg",
+        "left_points": {
+            "point0": (193, 342),
+            "point1": (175, 558)
+        },
+        "right_points": {
+            "point0": (197, 127),
+            "point1": (160, 363)
+        }
+    },
+    {
+        "left": "./p_left_400.jpg",
+        "right": "./p_right_400.jpg",
+        "left_points": {
+            "point0": (190, 385),
+            "point1": (175, 572)
+        },
+        "right_points": {
+            "point0": (193, 153),
+            "point1": (161, 397)
+        }
+    },
+    {
+        "left": "./p_left_1.jpg",
+        "right": "./p_right_1.jpg",
+        "left_points": {
+            "point0": (191, 360),
+            "point1": (177, 558)
+        },
+        "right_points": {
+            "point0": (195, 133),
+            "point1": (163, 374)
+        }
+    },
+    {
+        "left": "./c_left.jpg",
+        "right": "./c_right.jpg",
+        "left_points": {
+            "point0": (306, 365),
+            "point1": (302, 384)
+        },
+        "right_points": {
+            "point0": (302, 162),
+            "point1": (300, 178)
+        }
+    },
+    {
+        "left": "./left_frame.jpg",
+        "right": "./right_frame.jpg",
+        "left_points": {
+            "point0": (272, 396),
+            "point1": (269, 412)
+        },
+        "right_points": {
+            "point0": (271, 214),
+            "point1": (270, 230)
+        }
+    },
+    {
+        "left": "./left_frame_2562.jpg",
+        "right": "./right_frame_2562.jpg",
+        "left_points": {
+            "point0": (272, 396),
+            "point1": (268, 438)
+        },
+        "right_points": {
+            "point0": (271, 214),
+            "point1": (267, 259)
+        }
+    },
+    {
+        "left": "./left_frame_3146.jpg",
+        "right": "./right_frame_3146.jpg",
+        "left_points": {
+            "point0": (272, 396),
+            "point1": (268, 428)
+        },
+        "right_points": {
+            "point0": (271, 214),
+            "point1": (268, 248)
+        }
+    },
+    {
+        "left": "./left_frame_737.jpg",
+        "right": "./right_frame_737.jpg",
+        "left_points": {
+            "point0": (272, 396),
+            "point1": (270, 418)
+        },
+        "right_points": {
+            "point0": (271, 214),
+            "point1": (269, 237)
+        }
+    },
 ]
 TOTAL_VARIATIONS = 1000
 TARGET_WINDOW_SIZE = 15
