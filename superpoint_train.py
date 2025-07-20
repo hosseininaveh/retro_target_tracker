@@ -9,7 +9,7 @@ from tqdm import tqdm
 import torch.nn.functional as F
 
 # Configuration
-CHECKPOINT_DIR = "/home/mehdi/test_concrete_4/MarkerPose/dataset/checkpoints"
+CHECKPOINT_DIR = "/content/retro_target_tracker/checkpoints"
 os.makedirs(CHECKPOINT_DIR, exist_ok=True)
 device = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
 print(f"Using device: {device}")
@@ -49,12 +49,11 @@ class SuperPointDataset(Dataset):
             img = torch.from_numpy(img).float() / 255.0
             img = img.unsqueeze(0)  # [1, 480, 640]
             
-            heatmap = np.load(heatmap_path, allow_pickle=False).astype(np.float32)  # [3, 80, 60]
-            if heatmap.shape != (3, 80, 60):
-                raise ValueError(f"Invalid heatmap shape {heatmap.shape} for {heatmap_path}, expected (3, 80, 60)")
-            heatmap = torch.from_numpy(heatmap).float()
-            heatmap = heatmap.permute(0, 2, 1)  # [3, 60, 80]
-            heatmap = heatmap / (heatmap.sum(dim=0, keepdim=True) + 1e-6)  # Normalize across channels
+            heatmap = np.load(heatmap_path, allow_pickle=False).astype(np.float32)  # [3, 60, 80]
+            if heatmap.shape != (3, 60, 80):
+                raise ValueError(f"Invalid heatmap shape {heatmap.shape} for {heatmap_path}, expected (3, 60, 80)")
+            heatmap = torch.from_numpy(heatmap).float()  # [3, 60, 80]
+            heatmap = heatmap / (heatmap.sum(dim=0, keepdims=True) + 1e-6)  # Normalize across channels
             heatmap = torch.cat([heatmap, torch.zeros(1, 60, 80)], dim=0)  # [4, 60, 80]
             
             det_target = torch.zeros((65, 60, 80), dtype=torch.float32)
@@ -70,7 +69,7 @@ class SuperPointDataset(Dataset):
             det_target[64] = 1.0 - torch.sum(det_target[:64], dim=0)
             det_target[64] = torch.clamp(det_target[64], 0, 1)
             
-            return img, heatmap, det_target, img_name
+            return img, heatmap[:3], det_target, img_name  # Return [3, 60, 80] for cls
         except Exception as e:
             print(f"Error loading sample {img_name}: {e}")
             raise
@@ -87,7 +86,7 @@ class SuperPointDataset(Dataset):
                 if img is None:
                     print(f"Corrupt image: {img_path}")
                 heatmap = np.load(heatmap_path, allow_pickle=False)
-                if heatmap.shape != (3, 80, 60):
+                if heatmap.shape != (3, 60, 80):
                     print(f"Invalid heatmap shape {heatmap.shape} for {heatmap_path}")
             except Exception as e:
                 print(f"Error verifying {img_name}: {e}")
@@ -153,7 +152,7 @@ def focal_loss(pred, target, alpha=0.75, gamma=2.0):
 def weighted_mse_loss(pred, target, weight_positive=1000.0):
     mse = (pred - target) ** 2
     weight = torch.ones_like(target)
-    weight[:, :64, :, :] = weight_positive  # Weight positive cells
+    weight[:, :64, :, :] = weight_positive
     return (mse * weight).mean()
 
 def extract_keypoints_from_heatmap(cls, det, conf_threshold=0.5):
@@ -185,13 +184,12 @@ def load_specific_image(img_name, img_dir, annot_dir, img_size=(640, 480)):
     img = img.unsqueeze(0).unsqueeze(0)  # [1, 1, 480, 640]
     
     annot_path = os.path.join(annot_dir, img_name.replace('.jpg', '.npy'))
-    heatmap = np.load(annot_path, allow_pickle=False).astype(np.float32)  # [3, 80, 60]
-    if heatmap.shape != (3, 80, 60):
+    heatmap = np.load(annot_path, allow_pickle=False).astype(np.float32)  # [3, 60, 80]
+    if heatmap.shape != (3, 60, 80):
         print(f"Invalid heatmap shape {heatmap.shape} for {annot_path}")
         return None, None, None
-    heatmap = torch.from_numpy(heatmap).float()
-    heatmap = heatmap.permute(0, 2, 1)  # [3, 60, 80]
-    heatmap = heatmap / (heatmap.sum(dim=0, keepdim=True) + 1e-6)  # Normalize across channels
+    heatmap = torch.from_numpy(heatmap).float()  # [3, 60, 80]
+    heatmap = heatmap / (heatmap.sum(dim=0, keepdims=True) + 1e-6)  # Normalize across channels
     heatmap = torch.cat([heatmap, torch.zeros(1, 60, 80)], dim=0)  # [4, 60, 80]
     
     det_target = torch.zeros((65, 60, 80), dtype=torch.float32)
@@ -207,31 +205,31 @@ def load_specific_image(img_name, img_dir, annot_dir, img_size=(640, 480)):
     det_target[64] = 1.0 - torch.sum(det_target[:64], dim=0)
     det_target[64] = torch.clamp(det_target[64], 0, 1)
     
-    return img, heatmap, det_target
+    return img, heatmap[:3], det_target  # Return [3, 60, 80] for cls
 
 def train_model():
     # Initialize datasets
     train_dataset = SuperPointDataset(
-        '/home/mehdi/test_concrete_4/MarkerPose/dataset/superpoint_dataset', 'train'
+        '/content/retro_target_tracker/superpoint_dataset', 'train'
     )
     val_dataset = SuperPointDataset(
-        '/home/mehdi/test_concrete_4/MarkerPose/dataset/superpoint_dataset', 'val'
+        '/content/retro_target_tracker/superpoint_dataset', 'val'
     )
     
     print("Verifying dataset integrity...")
     train_dataset.verify_files()
     val_dataset.verify_files()
     
-    train_loader = DataLoader(train_dataset, batch_size=32, shuffle=True)
-    val_loader = DataLoader(val_dataset, batch_size=32)
+    train_loader = DataLoader(train_dataset, batch_size=8, shuffle=True)
+    val_loader = DataLoader(val_dataset, batch_size=8)
     print(f"Train dataset size: {len(train_dataset)} samples")
     print(f"Validation dataset size: {len(val_dataset)} samples")
     
     # Initialize model and optimizer
     model = SuperPointNet(Nc=2).to(device)
-    optimizer = optim.Adam(model.parameters(), lr=0.0001)
+    optimizer = optim.Adam(model.parameters(), lr=0.0001)  # Reduced LR
     scheduler = optim.lr_scheduler.ReduceLROnPlateau(optimizer, mode='min', factor=0.2, patience=5, min_lr=1e-6, verbose=True)
-    num_epochs = 150
+    num_epochs = 150  # Increased for better convergence
     best_val_loss = float('inf')
     
     # Classifier head weights
@@ -243,8 +241,8 @@ def train_model():
     for img_name in monitor_images:
         img, heatmap, det_target = load_specific_image(
             img_name,
-            '/home/mehdi/test_concrete_4/MarkerPose/dataset/superpoint_dataset/images/train',
-            '/home/mehdi/test_concrete_4/MarkerPose/dataset/superpoint_dataset/annotations/train'
+            '/content/retro_target_tracker/superpoint_dataset/images/train',
+            '/content/retro_target_tracker/superpoint_dataset/annotations/train'
         )
         if img is not None:
             monitor_data[img_name] = (img.to(device), heatmap.to(device), det_target.to(device))
@@ -319,7 +317,7 @@ def train_model():
         scheduler.step(val_loss)
     
     # Save final model
-    final_model_path = '/home/mehdi/test_concrete_4/MarkerPose/dataset/cpp_superpoint_retrained.pt'
+    final_model_path = '/content/retro_target_tracker/cpp_superpoint_retrained.pt'
     torch.jit.script(model).save(final_model_path)
     print(f"Saved final model to {final_model_path}")
 
