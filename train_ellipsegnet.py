@@ -2,105 +2,157 @@ import torch
 import torch.nn as nn
 import torch.optim as optim
 from torch.utils.data import Dataset, DataLoader
-import cv2
 import numpy as np
 import os
+from tqdm import tqdm
 
 class EllipSegNetDataset(Dataset):
     def __init__(self, dataset_dir, split):
-        self.dataset_dir = dataset_dir
-        self.split = split
-        self.image_dir = os.path.join(dataset_dir, f"images/{split}")
-        self.annotation_dir = os.path.join(dataset_dir, f"annotations/{split}")
-        self.image_files = [f for f in os.listdir(self.image_dir) if f.endswith('.jpg')]
-        print(f"Found {len(self.image_files)} images in {self.image_dir}")
-    
-    def __len__(self):
-        return len(self.image_files)
-    
-    def __getitem__(self, idx):
-        img_name = self.image_files[idx]
-        img_path = os.path.join(self.image_dir, img_name)
-        mask_path = os.path.join(self.annotation_dir, os.path.splitext(img_name)[0] + '.npy')
-        
-        img = cv2.imread(img_path, cv2.IMREAD_GRAYSCALE)
-        img = torch.from_numpy(img).float() / 255.0
-        img = img.unsqueeze(0)  # [1, 120, 120]
-        
-        mask = np.load(mask_path, allow_pickle=False).astype(np.float32)
-        mask = torch.from_numpy(mask).float().unsqueeze(0)  # [1, 120, 120]
-        
-        return {'image': img, 'mask': mask}
+        self.patch_dir = os.path.join(dataset_dir, f'ellipsegnet_patches/{split}')
+        self.mask_dir = os.path.join(dataset_dir, f'ellipsegnet_masks/{split}')
+        self.patch_files = sorted([f for f in os.listdir(self.patch_dir) if f.endswith('.npy')])
+        if not self.patch_files:
+            raise ValueError(f"No patch files found in {self.patch_dir}")
+        print(f"Found {len(self.patch_files)} patches in {self.patch_dir}")
 
-class DoubleConv(nn.Module):
-    def __init__(self, in_channels, out_channels, mid_channels=None):
-        super(DoubleConv, self).__init__()
-        if mid_channels is None:
-            mid_channels = out_channels
-        self.double_conv = nn.Sequential(
-            nn.Conv2d(in_channels, mid_channels, 3, padding=1),
-            nn.BatchNorm2d(mid_channels),
-            nn.ReLU(inplace=True),
-            nn.Conv2d(mid_channels, out_channels, 3, padding=1),
-            nn.BatchNorm2d(out_channels),
-            nn.ReLU(inplace=True)
-        )
-    
-    def forward(self, x):
-        return self.double_conv(x)
+    def __len__(self):
+        return len(self.patch_files)
+
+    def __getitem__(self, idx):
+        patch_name = self.patch_files[idx]
+        patch_path = os.path.join(self.patch_dir, patch_name)
+        mask_path = os.path.join(self.mask_dir, patch_name.replace('patch_', 'mask_'))
+        
+        try:
+            patch = np.load(patch_path, allow_pickle=False).astype(np.float32)
+            mask = np.load(mask_path, allow_pickle=False).astype(np.float32)
+            if patch.shape != (120, 120) or mask.shape != (120, 120):
+                raise ValueError(f"Invalid shapes: patch={patch.shape}, mask={mask.shape} for {patch_name}")
+            patch = torch.from_numpy(patch).unsqueeze(0)  # [1, 120, 120]
+            mask = torch.from_numpy(mask).unsqueeze(0)   # [1, 120, 120]
+            return {'patch': patch, 'mask': mask, 'patch_name': patch_name}
+        except Exception as e:
+            print(f"Error loading {patch_name}: {e}")
+            raise
 
 class EllipSegNet(nn.Module):
-    def __init__(self, init_f=64, num_outputs=1):
+    def __init__(self, in_channels=1, n_channels=16):
         super(EllipSegNet, self).__init__()
-        self.pool = nn.MaxPool2d(2, stride=2)
-        self.upsample = nn.Upsample(scale_factor=2, mode='bilinear', align_corners=True)
-        self.inc = DoubleConv(1, init_f)
-        self.down1 = DoubleConv(init_f, 2*init_f)
-        self.down2 = DoubleConv(2*init_f, 4*init_f)
-        self.down3 = DoubleConv(4*init_f, 4*init_f)
-        self.up1 = DoubleConv(2*4*init_f, 2*init_f, 4*init_f)
-        self.up2 = DoubleConv(2*2*init_f, init_f, 2*init_f)
-        self.up3 = DoubleConv(2*init_f, init_f)
-        self.outc = nn.Conv2d(init_f, num_outputs, 1)
-    
+        self.conv1 = nn.Sequential(
+            nn.Conv2d(in_channels, n_channels, 3, stride=1, padding=1),
+            nn.ReLU(),
+            nn.MaxPool2d(2, stride=2)
+        )
+        self.conv2 = nn.Sequential(
+            nn.Conv2d(n_channels, n_channels*2, 3, stride=1, padding=1),
+            nn.ReLU(),
+            nn.MaxPool2d(2, stride=2)
+        )
+        self.conv3 = nn.Sequential(
+            nn.Conv2d(n_channels*2, n_channels*4, 3, stride=1, padding=1),
+            nn.ReLU(),
+            nn.MaxPool2d(2, stride=2)
+        )
+        self.conv4 = nn.Sequential(
+            nn.Conv2d(n_channels*4, n_channels*8, 3, stride=1, padding=1),
+            nn.ReLU(),
+            nn.MaxPool2d(2, stride=2)
+        )
+        self.upconv4 = nn.Sequential(
+            nn.Upsample(scale_factor=2, mode='bilinear', align_corners=True),
+            nn.Conv2d(n_channels*8, n_channels*4, 3, stride=1, padding=1),
+            nn.ReLU()
+        )
+        self.upconv3 = nn.Sequential(
+            nn.Upsample(scale_factor=2, mode='bilinear', align_corners=True),
+            nn.Conv2d(n_channels*4, n_channels*2, 3, stride=1, padding=1),
+            nn.ReLU()
+        )
+        self.upconv2 = nn.Sequential(
+            nn.Upsample(scale_factor=2, mode='bilinear', align_corners=True),
+            nn.Conv2d(n_channels*2, n_channels, 3, stride=1, padding=1),
+            nn.ReLU()
+        )
+        self.upconv1 = nn.Conv2d(n_channels, 1, 3, stride=1, padding=1)
+
     def forward(self, x):
-        x1 = self.inc(x)
-        x2 = self.down1(self.pool(x1))
-        x3 = self.down2(self.pool(x2))
-        x4 = self.down3(self.pool(x3))
-        x = torch.cat([self.upsample(x4), x3], dim=1)
-        x = self.up1(x)
-        x = torch.cat([self.upsample(x), x2], dim=1)
-        x = self.up2(x)
-        x = torch.cat([self.upsample(x), x1], dim=1)
-        x = self.up3(x)
-        x = self.outc(x)
-        return torch.sigmoid(x)
+        x = self.conv1(x)
+        x = self.conv2(x)
+        x = self.conv3(x)
+        x = self.conv4(x)
+        x = self.upconv4(x)
+        x = self.upconv3(x)
+        x = self.upconv2(x)
+        x = self.upconv1(x)
+        return x
+
+# Training setup
+device = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
+print(f"Using device: {device}")
+
+# Load datasets
+train_dataset = EllipSegNetDataset('/content/retro_target_tracker/dataset/ellipsegnet_dataset', '
+
+train')
+val_dataset = EllipSegNetDataset('/content/retro_target_tracker/dataset/ellipsegnet_dataset', 'val')
+train_loader = DataLoader(train_dataset, batch_size=8, shuffle=True, num_workers=0)
+val_loader = DataLoader(val_dataset, batch_size=8, shuffle=False, num_workers=0)
+
+model = EllipSegNet(in_channels=1, n_channels=16).to(device)
+optimizer = optim.Adam(model.parameters(), lr=0.001)
+criterion = nn.BCEWithLogitsLoss()
 
 # Training loop
-device = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
-dataset = EllipSegNetDataset('/home/mehdi/test_concrete_4/MarkerPose/dataset/ellipsegnet_dataset', 'train')
-dataloader = DataLoader(dataset, batch_size=32, shuffle=True)
-model = EllipSegNet(init_f=64, num_outputs=1).to(device)
-optimizer = optim.Adam(model.parameters(), lr=0.001)
-criterion = nn.BCELoss()
-
-for epoch in range(50):
-    total_loss = 0
-    for batch_idx, batch in enumerate(dataloader):
-        images = batch['image'].to(device)
-        masks = batch['mask'].to(device)
+num_epochs = 50
+best_val_loss = float('inf')
+for epoch in range(num_epochs):
+    # Training
+    model.train()
+    train_loss = 0
+    for batch_idx, batch in enumerate(tqdm(train_loader, desc=f"Epoch {epoch+1}/{num_epochs} (Train)")):
+        patches = batch['patch'].to(device)  # [batch, 1, 120, 120]
+        masks = batch['mask'].to(device)    # [batch, 1, 120, 120]
+        
         optimizer.zero_grad()
-        outputs = model(images)
+        outputs = model(patches)
         loss = criterion(outputs, masks)
         loss.backward()
         optimizer.step()
-        total_loss += loss.item()
-        print(f"Epoch {epoch+1}, Batch {batch_idx+1}, Loss: {loss.item()}")
-    print(f"Epoch {epoch+1}, Average Loss: {total_loss / len(dataloader)}")
+        
+        train_loss += loss.item()
+        
+        if batch_idx % 10 == 0:
+            print(f"Epoch {epoch+1}, Train Batch {batch_idx+1}/{len(train_loader)}, Loss: {loss.item():.4f}")
+    
+    avg_train_loss = train_loss / len(train_loader)
+    print(f"Epoch {epoch+1}, Average Train Loss: {avg_train_loss:.4f}")
+    
+    # Validation
+    model.eval()
+    val_loss = 0
+    with torch.no_grad():
+        for batch_idx, batch in enumerate(tqdm(val_loader, desc=f"Epoch {epoch+1}/{num_epochs} (Val)")):
+            patches = batch['patch'].to(device)
+            masks = batch['mask'].to(device)
+            outputs = model(patches)
+            loss = criterion(outputs, masks)
+            val_loss += loss.item()
+    
+    avg_val_loss = val_loss / len(val_loader)
+    print(f"Epoch {epoch+1}, Average Val Loss: {avg_val_loss:.4f}")
+    
+    # Save best model
+    if avg_val_loss < best_val_loss:
+        best_val_loss = avg_val_loss
+        torch.save(model.state_dict(), '/content/retro_target_tracker/dataset/ellipsegnet_best.pt')
+        print(f"Saved best model with Val Loss: {best_val_loss:.4f}")
 
-# Save model
-torch.save(model.state_dict(), '/home/mehdi/test_concrete_4/MarkerPose/dataset/ellipsegnet.pt')
+# Save final state dict
+torch.save(model.state_dict(), '/content/retro_target_tracker/dataset/ellipsegnet.pt')
+
+# Convert to TorchScript
 model.eval()
-traced_model = torch.jit.trace(model, torch.randn(1, 1, 120, 120).to(device))
-traced_model.save('/home/mehdi/test_concrete_4/MarkerPose/dataset/cpp_ellipsegnet.pt')
+example_input = torch.randn(1, 1, 120, 120).to(device)
+traced_model = torch.jit.trace(model, example_input)
+traced_model.save('/content/retro_target_tracker/dataset/cpp_ellipsegnet.pt')
+print("Saved TorchScript model to /content/retro_target_tracker/dataset/cpp_ellipsegnet.pt")
