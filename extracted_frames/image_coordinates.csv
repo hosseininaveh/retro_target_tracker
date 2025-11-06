@@ -1,5 +1,4 @@
-,point 1,,point 2,
-Frame_Names,col,row,col,row
+Frame_Names,point1_col,point1_row,point2_col,point2_row
 left_frame_0001.jpg,93,301,266,307
 left_frame_0002.jpg,93,301,266,307
 left_frame_0003.jpg,93,301,269,308
