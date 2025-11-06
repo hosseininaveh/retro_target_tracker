@@ -21,9 +21,10 @@ VAL_RATIO = 0.15
 # YOLO class mapping - point0 is class 0, point1 is class 1
 CLASS_MAP = {"point0": 0, "point1": 1}
 
-def load_image_observations(csv_file):
+def load_image_observations(csv_file, image_dir=""):
     """Load image observations from CSV file and convert to IMAGE_PAIRS format"""
-    df = pd.read_csv(csv_file)
+    # Read CSV with tab delimiter
+    df = pd.read_csv(csv_file, delimiter='\t')
     image_pairs = []
     
     # Group frames by pairs (assuming alternating left/right frames)
@@ -38,15 +39,15 @@ def load_image_observations(csv_file):
         left_frame = left_frame_info['Frame_Names']
         right_frame = right_frame_info['Frame_Names']
         
-        # Assuming CSV columns: Frame_Names, point1_col, point1_row, point2_col, point2_row
+        # CSV columns: Frame_Names, point1_col, point1_row, point2_col, point2_row
         left_point0 = (left_frame_info['point1_row'], left_frame_info['point1_col'])
         left_point1 = (left_frame_info['point2_row'], left_frame_info['point2_col'])
         right_point0 = (right_frame_info['point1_row'], right_frame_info['point1_col'])
         right_point1 = (right_frame_info['point2_row'], right_frame_info['point2_col'])
         
         image_pair = {
-            "left": f"extracted_frames/{left_frame}",
-            "right": f"extracted_frames/{right_frame}",
+            "left": os.path.join(image_dir, left_frame),
+            "right": os.path.join(image_dir, right_frame),
             "left_points": {
                 "point0": left_point0,
                 "point1": left_point1

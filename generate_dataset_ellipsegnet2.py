@@ -23,7 +23,8 @@ MASK_ANGLE = 0  # Rotation angle for ellipse
 
 def load_image_observations(csv_file, image_root):
     """Load image observations from CSV file and convert to IMAGE_PAIRS format"""
-    df = pd.read_csv(csv_file)
+    # Read CSV with tab delimiter
+    df = pd.read_csv(csv_file, delimiter='\t')
     image_pairs = []
     
     # Group frames by pairs (assuming alternating left/right frames)
@@ -38,7 +39,7 @@ def load_image_observations(csv_file, image_root):
         left_frame = left_frame_info['Frame_Names']
         right_frame = right_frame_info['Frame_Names']
         
-        # Assuming CSV columns: Frame_Names, point1_col, point1_row, point2_col, point2_row
+        # CSV columns: Frame_Names, point1_col, point1_row, point2_col, point2_row
         # Note: This code uses (col, row) format for points
         left_point0 = (left_frame_info['point1_col'], left_frame_info['point1_row'])
         left_point1 = (left_frame_info['point2_col'], left_frame_info['point2_row'])
