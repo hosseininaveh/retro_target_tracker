@@ -9,8 +9,8 @@ import shutil
 from skimage.draw import disk
 
 # Configuration
-DATASET_ROOT = "/content/retro_target_tracker/dataset/superpoint_dataset"
-IMAGE_DIR = "/content/retro_target_tracker/dataset/retro_target_tracker"
+DATASET_ROOT = "/home/mehdi/test_concrete_4/MarkerPose/dataset/superpoint_dataset"
+IMAGE_DIR = "/home/mehdi/test_concrete_4/MarkerPose/dataset/retro_target_tracker/extracted_frames"
 IMAGE_COORDINATES_FILE = "extracted_frames/image_coordinates.csv"  # Path to your CSV file
 TOTAL_VARIATIONS = 10000  # Increased for more diversity
 OUTPUT_SIZE = (640, 480)  # Width x Height
@@ -23,43 +23,83 @@ RANDOM_OFFSET_RANGE = 50   # Larger offsets for robustness
 
 def load_image_observations(csv_file, image_dir):
     """Load image observations from CSV file and convert to IMAGE_PAIRS format"""
-    # Read CSV with tab delimiter
-    df = pd.read_csv(csv_file, delimiter='\t')
-    image_pairs = []
-    
-    # Group frames by pairs (assuming alternating left/right frames)
-    for i in range(0, len(df), 2):
-        if i + 1 >= len(df):
-            break
+    try:
+        # Read the entire file and parse manually
+        with open(csv_file, 'r') as f:
+            lines = [line.strip() for line in f.readlines() if line.strip()]
+        
+        # Parse header and data
+        header = lines[0]
+        data_lines = lines[1:]
+        
+        print(f"Header: {header}")
+        print(f"Number of data lines: {len(data_lines)}")
+        
+        # Parse each line
+        data = []
+        for line in data_lines:
+            parts = line.split(',')
+            if len(parts) == 5:
+                data.append({
+                    'Frame_Names': parts[0].strip(),
+                    'point1_col': int(parts[1]),
+                    'point1_row': int(parts[2]),
+                    'point2_col': int(parts[3]),
+                    'point2_row': int(parts[4])
+                })
+        
+        # Create DataFrame
+        df = pd.DataFrame(data)
+        print("DataFrame created successfully")
+        print("DataFrame columns:", df.columns.tolist())
+        print("DataFrame shape:", df.shape)
+        print("First few rows:")
+        print(df.head())
+        
+        image_pairs = []
+        
+        # Group frames by pairs (assuming alternating left/right frames)
+        for i in range(0, len(df), 2):
+            if i + 1 >= len(df):
+                break
+                
+            left_frame_info = df.iloc[i]
+            right_frame_info = df.iloc[i + 1]
             
-        left_frame_info = df.iloc[i]
-        right_frame_info = df.iloc[i + 1]
-        
-        # Extract frame names and coordinates
-        left_frame = left_frame_info['Frame_Names']
-        right_frame = right_frame_info['Frame_Names']
-        
-        # CSV columns: Frame_Names, point1_col, point1_row, point2_col, point2_row
-        left_point0 = (left_frame_info['point1_row'], left_frame_info['point1_col'])
-        left_point1 = (left_frame_info['point2_row'], left_frame_info['point2_col'])
-        right_point0 = (right_frame_info['point1_row'], right_frame_info['point1_col'])
-        right_point1 = (right_frame_info['point2_row'], right_frame_info['point2_col'])
-        
-        image_pair = {
-            "left": os.path.join(image_dir, left_frame),
-            "right": os.path.join(image_dir, right_frame),
-            "left_points": {
-                "point0": left_point0,
-                "point1": left_point1
-            },
-            "right_points": {
-                "point0": right_point0,
-                "point1": right_point1
+            # Extract frame names and coordinates
+            left_frame = str(left_frame_info['Frame_Names']).strip()
+            right_frame = str(right_frame_info['Frame_Names']).strip()
+            
+            print(f"Processing pair: {left_frame} and {right_frame}")
+            
+            # Convert coordinates to integers
+            left_point0 = (int(left_frame_info['point1_row']), int(left_frame_info['point1_col']))
+            left_point1 = (int(left_frame_info['point2_row']), int(left_frame_info['point2_col']))
+            right_point0 = (int(right_frame_info['point1_row']), int(right_frame_info['point1_col']))
+            right_point1 = (int(right_frame_info['point2_row']), int(right_frame_info['point2_col']))
+            
+            image_pair = {
+                "left": os.path.join(image_dir, left_frame),
+                "right": os.path.join(image_dir, right_frame),
+                "left_points": {
+                    "point0": left_point0,
+                    "point1": left_point1
+                },
+                "right_points": {
+                    "point0": right_point0,
+                    "point1": right_point1
+                }
             }
-        }
-        image_pairs.append(image_pair)
-    
-    return image_pairs
+            image_pairs.append(image_pair)
+        
+        print(f"Successfully loaded {len(image_pairs)} image pairs")
+        return image_pairs
+        
+    except Exception as e:
+        print(f"Error loading CSV file: {e}")
+        import traceback
+        traceback.print_exc()
+        return []
 
 def extract_target_template(img, center, window_size=TARGET_WINDOW_SIZE):
     """Extract target template with precise masking."""

@@ -7,8 +7,8 @@ import shutil
 from sklearn.model_selection import train_test_split
 
 # Configuration
-DATASET_ROOT = "/content/retro_target_tracker/dataset/ellipsegnet_dataset"
-IMAGE_ROOT = "/content/retro_target_tracker/images"
+DATASET_ROOT = "/home/mehdi/test_concrete_4/MarkerPose/dataset/superpoint_dataset"
+IMAGE_ROOT = "/home/mehdi/test_concrete_4/MarkerPose/dataset/retro_target_tracker/extracted_frames"
 IMAGE_COORDINATES_FILE = "extracted_frames/image_coordinates.csv"  # Path to your CSV file
 TOTAL_VARIATIONS = 1000
 TARGET_WINDOW_SIZE = 15
